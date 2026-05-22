@@ -8,6 +8,7 @@ services:
     volumes:
       - index:/data/index
       - pyterrier_cache:/root/.pyterrier
+      - ir_datasets_cache:/root/.ir_datasets
     environment:
       INDEX_PATH: /data/index
     healthcheck:
@@ -30,5 +31,6 @@ services:
         condition: service_healthy
 
 volumes:
-  index:         # persists the Terrier on-disk index across restarts
-  pyterrier_cache:  # caches downloaded Terrier JARs across rebuilds
+  index:              # persists the Terrier on-disk index across restarts
+  pyterrier_cache:    # caches downloaded Terrier JARs across rebuilds
+  ir_datasets_cache:  # persists Highwire corpus downloads (~2 GB) across restarts
