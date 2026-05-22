@@ -1,0 +1,11 @@
+python-terrier>=0.11.0
+ir_datasets>=0.5.5
+torch>=2.0.0
+sentence-transformers>=2.7.0
+transformers>=4.40.0
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
+streamlit>=1.35.0
+requests>=2.31.0
+pandas>=2.2.0
+numpy>=1.26.0

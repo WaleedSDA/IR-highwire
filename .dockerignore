@@ -1,0 +1,11 @@
+.venv/
+.idea/
+.claude/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pdf
+index/
+.git/
+.gitignore
