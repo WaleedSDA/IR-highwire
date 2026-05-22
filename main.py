@@ -28,9 +28,7 @@ def iter_corpus():
     for doc in ds.docs_iter():
         yield {
             "docno": doc.doc_id,
-            "title": getattr(doc, "title", ""),
-            "journal": getattr(doc, "journal", ""),
-            "text": getattr(doc, "text", ""),
+            "text": doc.default_text(),
         }
 
 

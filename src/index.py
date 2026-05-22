@@ -22,15 +22,15 @@ class PositionalIndex:
         if not pt.started():
             pt.init()
 
-        # fields= is omitted intentionally: PyTerrier 1.0's field-zone mode requires
-        # all named fields to be non-empty or Terrier registers every document as empty
-        # and skips building the lexicon. Single-stream text indexing (text_attrs default)
-        # is correct for the Highwire corpus where title/journal are often absent.
+        # text_attrs must be set explicitly: PyTerrier 1.0's auto-detection skips any
+        # field that appears in meta, so without this "text" would be excluded from
+        # indexing (Terrier would see zero terms and never build the lexicon).
         indexer = pt.IterDictIndexer(
             self.index_path,
             blocks=self.blocks,
             meta={"docno": 26, "text": 131072},
             meta_reverse=["docno"],
+            text_attrs=("text",),
             overwrite=True,
         )
         self._index_ref = indexer.index(docs)
