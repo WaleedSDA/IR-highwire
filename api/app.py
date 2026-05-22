@@ -37,6 +37,8 @@ class SearchRequest(BaseModel):
     neural_model: str = "biobert"
     ranker: str = "bm25"
     top_k: int = 10
+    bm25_k1: float | None = None
+    bm25_b: float | None = None
 
 
 class FeedbackRequest(BaseModel):
@@ -64,6 +66,8 @@ def search(req: SearchRequest) -> dict:
             use_neural=req.use_neural,
             ranker=req.ranker,
             neural_model=req.neural_model,
+            bm25_k1=req.bm25_k1,
+            bm25_b=req.bm25_b,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))

@@ -112,6 +112,8 @@ class SearchEngine:
         use_neural: bool = True,
         ranker: str = "bm25",
         neural_model: str | None = None,
+        bm25_k1: float | None = None,
+        bm25_b: float | None = None,
     ) -> SearchResponse:
         """
         Full retrieval pipeline.
@@ -130,11 +132,19 @@ class SearchEngine:
             query = self.query_proc.expand_with_mesh(query)
 
         active_ranker = self.rankers[0] if ranker.lower() == "bm25" else self.rankers[1]
-        candidates = active_ranker.rank(query.processed, top_k=self._cfg["top_k"])
+        
+        rank_kwargs = {}
+        if ranker.lower() == "bm25":
+            if bm25_k1 is not None:
+                rank_kwargs["k1"] = bm25_k1
+            if bm25_b is not None:
+                rank_kwargs["b"] = bm25_b
+
+        candidates = active_ranker.rank(query.processed, top_k=self._cfg["top_k"], **rank_kwargs)
 
         if use_feedback and not candidates.empty:
             query = self.query_proc.apply_feedback(query, candidates)
-            candidates = active_ranker.rank(query.processed, top_k=self._cfg["top_k"])
+            candidates = active_ranker.rank(query.processed, top_k=self._cfg["top_k"], **rank_kwargs)
 
         if "text" not in candidates.columns:
             candidates["text"] = ""

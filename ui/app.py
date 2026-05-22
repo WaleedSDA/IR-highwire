@@ -34,6 +34,13 @@ with search_tab:
     neural_model = col3.selectbox("Neural Model", ["biobert", "pubmedbert"], disabled=not use_neural, label_visibility="collapsed")
     ranker = col4.selectbox("1st-stage ranker", ["bm25", "tfidf"])
 
+    bm25_k1 = None
+    bm25_b = None
+    if ranker == "bm25":
+        sub_col1, sub_col2 = col4.columns(2)
+        bm25_k1 = sub_col1.number_input("k1", min_value=0.0, max_value=10.0, value=1.5, step=0.1, help="BM25 term frequency saturation parameter")
+        bm25_b = sub_col2.number_input("b (beta)", min_value=0.0, max_value=1.0, value=0.75, step=0.05, help="BM25 document length normalization parameter")
+
     top_k = st.slider("Results to show", min_value=5, max_value=50, value=10, step=5)
 
     if st.button("Search", type="primary") and query.strip():
@@ -49,6 +56,8 @@ with search_tab:
                         "neural_model": neural_model,
                         "ranker": ranker,
                         "top_k": top_k,
+                        "bm25_k1": bm25_k1,
+                        "bm25_b": bm25_b,
                     },
                     timeout=120,
                 )
