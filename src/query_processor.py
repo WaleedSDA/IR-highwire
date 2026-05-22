@@ -87,16 +87,24 @@ class QueryProcessor:
         return q
 
     def expand_with_mesh(self, q: Query) -> Query:
-        """Expand every term in the query through MeSH synonyms and related terms."""
-        raw_terms: list[str] = []
-        for term in q.terms:
-            raw_terms.extend(self.mesh_expander.expand(term))
+        """Expand via MeSH: try the full query as one concept first, then per-term."""
+        # Try the whole query as a single MeSH descriptor (e.g. "DNA repair" → D004260).
+        # _fetch_mesh_data returns only the original term when no descriptor is found,
+        # so len > 1 means a real match was found.
+        full_expansion = self.mesh_expander.expand(q.processed)
+        if len(full_expansion) > 1:
+            raw_entries = full_expansion
+        else:
+            # Fall back: expand each token independently.
+            raw_entries = []
+            for term in q.terms:
+                raw_entries.extend(self.mesh_expander.expand(term))
 
-        # MeSH entries often contain commas, parentheses, slashes, etc. that
-        # break Terrier's query parser.  Tokenise each entry into plain words.
+        # MeSH entries contain commas, hyphens, parentheses, etc. that break
+        # Terrier's query parser — tokenise each entry into plain words.
         tokens: list[str] = []
         seen: set[str] = set()
-        for entry in raw_terms:
+        for entry in raw_entries:
             for tok in re.split(r"\s+", re.sub(r"[^\w\s]", " ", entry)):
                 tl = tok.lower()
                 if tok and tl not in seen:

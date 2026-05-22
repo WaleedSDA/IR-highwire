@@ -61,10 +61,20 @@ with search_tab:
 
         hits = data.get("results", [])
         st.subheader(f"{len(hits)} results for: _{data['query']}_")
+
+        expanded_query = data.get("expanded_query")
+        if expanded_query and expanded_query != data["query"]:
+            st.info(f"**Expanded query:** {expanded_query}")
+
         for i, hit in enumerate(hits, 1):
             with st.expander(f"{i}. `{hit['docno']}` — score: {hit['score']:.4f}"):
                 snippet = hit.get("snippet", "")
                 st.markdown(snippet if snippet else "_No snippet available._")
+                full_text = hit.get("text", "")
+                if full_text:
+                    st.divider()
+                    st.markdown("**Full document**")
+                    st.markdown(full_text)
 
 # ------------------------------------------------------------------
 # Feedback UI
@@ -78,7 +88,7 @@ with feedback_tab:
             try:
                 resp = requests.post(
                     f"{API_URL}/feedback",
-                    json={"query": fb_query, "relevant_doc_ids": []},
+                    json={"query": fb_query},
                     timeout=120,
                 )
                 resp.raise_for_status()
@@ -89,6 +99,10 @@ with feedback_tab:
             except Exception as exc:
                 st.error(f"Error: {exc}")
                 st.stop()
+
+        expanded_query = data.get("expanded_query")
+        if expanded_query and expanded_query != fb_query:
+            st.info(f"**Expanded query (Bo1):** {expanded_query}")
 
         st.subheader("Feedback-refined results")
         for i, hit in enumerate(data.get("results", []), 1):
