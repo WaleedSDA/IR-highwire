@@ -15,7 +15,7 @@ st.set_page_config(page_title="BoolFellas IR", page_icon="🔬", layout="wide")
 st.title("BoolFellas — Biomedical Information Retrieval")
 st.caption("Highwire Press · TREC Genomics 2006–2007")
 
-search_tab, feedback_tab, eval_tab = st.tabs(["Search", "Relevance Feedback", "Evaluation"])
+search_tab, eval_tab = st.tabs(["Search", "Evaluation"])
 
 # ------------------------------------------------------------------
 # Search UI
@@ -75,38 +75,6 @@ with search_tab:
                     st.divider()
                     st.markdown("**Full document**")
                     st.markdown(full_text)
-
-# ------------------------------------------------------------------
-# Feedback UI
-# ------------------------------------------------------------------
-with feedback_tab:
-    st.markdown("Submit a query to apply pseudo-relevance feedback (Bo1/KL) and see the refined results.")
-    fb_query = st.text_input("Query", key="fb_query")
-
-    if st.button("Apply Feedback", type="primary") and fb_query.strip():
-        with st.spinner("Applying relevance feedback…"):
-            try:
-                resp = requests.post(
-                    f"{API_URL}/feedback",
-                    json={"query": fb_query},
-                    timeout=120,
-                )
-                resp.raise_for_status()
-                data = resp.json()
-            except requests.exceptions.ConnectionError:
-                st.error("Cannot reach the API server.")
-                st.stop()
-            except Exception as exc:
-                st.error(f"Error: {exc}")
-                st.stop()
-
-        expanded_query = data.get("expanded_query")
-        if expanded_query and expanded_query != fb_query:
-            st.info(f"**Expanded query (Bo1):** {expanded_query}")
-
-        st.subheader("Feedback-refined results")
-        for i, hit in enumerate(data.get("results", []), 1):
-            st.write(f"{i}. `{hit['docno']}` — score: {hit['score']:.4f}")
 
 # ------------------------------------------------------------------
 # Eval UI
