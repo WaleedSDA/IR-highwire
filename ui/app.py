@@ -30,7 +30,8 @@ with search_tab:
     col1, col2, col3, col4 = st.columns(4)
     use_mesh = col1.checkbox("MeSH expansion", help="Expand terms via NCBI MeSH vocabulary")
     use_feedback = col2.checkbox("Relevance feedback (Bo1/KL)")
-    use_neural = col3.checkbox("Neural re-rank (BioBERT)", value=True)
+    use_neural = col3.checkbox("Neural re-rank", value=True)
+    neural_model = col3.selectbox("Neural Model", ["biobert", "pubmedbert"], disabled=not use_neural, label_visibility="collapsed")
     ranker = col4.selectbox("1st-stage ranker", ["bm25", "tfidf"])
 
     top_k = st.slider("Results to show", min_value=5, max_value=50, value=10, step=5)
@@ -45,6 +46,7 @@ with search_tab:
                         "use_mesh": use_mesh,
                         "use_feedback": use_feedback,
                         "use_neural": use_neural,
+                        "neural_model": neural_model,
                         "ranker": ranker,
                         "top_k": top_k,
                     },

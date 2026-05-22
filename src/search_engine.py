@@ -50,6 +50,7 @@ class SearchEngine:
         self.query_proc: QueryProcessor | None = None
         self.rankers: list[Ranker] = []
         self.reranker: NeuralReranker | None = None
+        self._reranker_cache: dict[str, NeuralReranker] = {}
         self._snippet_gen: SnippetGenerator | None = None
         self._initialized = False
 
@@ -82,9 +83,22 @@ class SearchEngine:
             BM25Ranker(index_ref, k1=cfg["bm25_k1"], b=cfg["bm25_b"], top_k=cfg["top_k"]),
             TFIDFRanker(index_ref, top_k=cfg["top_k"]),
         ]
-        self.reranker = NeuralReranker(model_name=cfg["neural_model"])
+        self._reranker_cache = {
+            cfg["neural_model"].lower(): NeuralReranker(model_name=cfg["neural_model"])
+        }
+        self.reranker = self._reranker_cache[cfg["neural_model"].lower()]
         self._snippet_gen = SnippetGenerator(index_ref)
         self._initialized = True
+
+    # ------------------------------------------------------------------
+    # Search
+    # ------------------------------------------------------------------
+
+    def _get_reranker(self, model_name: str) -> NeuralReranker:
+        name_lower = model_name.lower()
+        if name_lower not in self._reranker_cache:
+            self._reranker_cache[name_lower] = NeuralReranker(model_name=name_lower)
+        return self._reranker_cache[name_lower]
 
     # ------------------------------------------------------------------
     # Search
@@ -97,6 +111,7 @@ class SearchEngine:
         use_feedback: bool = False,
         use_neural: bool = True,
         ranker: str = "bm25",
+        neural_model: str | None = None,
     ) -> SearchResponse:
         """
         Full retrieval pipeline.
@@ -125,7 +140,9 @@ class SearchEngine:
             candidates["text"] = ""
 
         if use_neural and not candidates.empty:
-            candidates = self.reranker.rerank(candidates, query.processed)
+            model = neural_model or self._cfg.get("neural_model", "biobert")
+            reranker = self._get_reranker(model)
+            candidates = reranker.rerank(candidates, query.processed)
 
         if not candidates.empty:
             candidates["snippet"] = candidates.apply(
