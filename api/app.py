@@ -112,14 +112,18 @@ def feedback(req: FeedbackRequest) -> dict:
 
 
 @app.get("/evaluate")
-def evaluate() -> list[dict]:
-    """Run pt.Experiment and return metrics for BM25 and TF-IDF."""
+def evaluate(use_neural: bool = False) -> list[dict]:
+    """
+    Run pt.Experiment over all pipeline combinations.
+    Pass ?use_neural=true to include BioBERT reranking (~20 min extra).
+    """
     try:
-        df = _engine.evaluate()
+        df = _engine.evaluate(use_neural=use_neural)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        _log.exception("evaluate failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
     return df.to_dict(orient="records")
 
 

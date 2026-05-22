@@ -52,3 +52,24 @@ class NeuralReranker:
         result = result.sort_values("score", ascending=False).reset_index(drop=True)
         result["rank"] = range(1, len(result) + 1)
         return result
+
+    def as_transformer(self):
+        """Wrap this reranker as a PyTerrier Transformer for use in pt.Experiment."""
+        import pyterrier as pt
+
+        _self = self
+
+        class _NeuralTransformer(pt.Transformer):
+            def transform(self, df: pd.DataFrame) -> pd.DataFrame:
+                if df.empty:
+                    return df
+                if "text" not in df.columns:
+                    df = df.copy()
+                    df["text"] = ""
+                results = []
+                for _, group in df.groupby("qid", sort=False):
+                    query = group["query"].iloc[0]
+                    results.append(_self.rerank(group.copy(), query))
+                return pd.concat(results).reset_index(drop=True) if results else df
+
+        return _NeuralTransformer()

@@ -144,13 +144,22 @@ class SearchEngine:
     def evaluate(
         self,
         dataset_names: list[str] | None = None,
+        use_feedback: bool = True,
+        use_neural: bool = False,
     ) -> pd.DataFrame:
-        """Run pt.Experiment over BM25 and TF-IDF against the Highwire TREC qrels."""
+        """
+        Run pt.Experiment over all enabled pipeline combinations.
+
+        use_neural defaults to False because BioBERT reranking over all
+        56 TREC topics takes ~20 minutes; enable it deliberately.
+        """
         self._require_init()
         engine = EvaluationEngine(dataset_names)
         return engine.run_experiment(
             rankers=self.rankers,
             names=["BM25", "TF-IDF"],
+            feedback=self.query_proc.feedback_model if use_feedback else None,
+            reranker=self.reranker if use_neural else None,
         )
 
     def _require_init(self) -> None:

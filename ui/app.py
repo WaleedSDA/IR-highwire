@@ -85,10 +85,25 @@ with eval_tab:
         "This may take several minutes the first time."
     )
 
+    use_neural_eval = st.checkbox(
+        "Include Neural re-rank (BioBERT)",
+        value=False,
+        help="Adds +Neural and +Bo1+Neural rows. Runs BioBERT over all 56 topics — expect ~20 extra minutes.",
+    )
+
+    pipelines_desc = "BM25, TF-IDF, BM25+Bo1, TF-IDF+Bo1"
+    if use_neural_eval:
+        pipelines_desc += ", BM25+Neural, TF-IDF+Neural, BM25+Bo1+Neural, TF-IDF+Bo1+Neural"
+    st.caption(f"Will evaluate: {pipelines_desc}")
+
     if st.button("Run Evaluation", type="primary"):
-        with st.spinner("Running pt.Experiment — this takes a few minutes…"):
+        with st.spinner("Running pt.Experiment — this may take several minutes…"):
             try:
-                resp = requests.get(f"{API_URL}/evaluate", timeout=600)
+                resp = requests.get(
+                    f"{API_URL}/evaluate",
+                    params={"use_neural": str(use_neural_eval).lower()},
+                    timeout=3600,
+                )
                 resp.raise_for_status()
                 records = resp.json()
             except requests.exceptions.ConnectionError:

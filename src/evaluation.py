@@ -50,18 +50,54 @@ class EvaluationEngine:
         self,
         rankers: list,
         names: list[str] | None = None,
+        feedback=None,
+        reranker=None,
     ) -> pd.DataFrame:
-        pipelines = [
-            r.get_pipeline() if hasattr(r, "get_pipeline") else r
-            for r in rankers
-        ]
+        """
+        Build all enabled combinations and run pt.Experiment.
+
+        For each first-stage ranker the following pipelines are created:
+          <Ranker>
+          <Ranker> + Bo1          (if feedback is given)
+          <Ranker> + Neural       (if reranker is given)
+          <Ranker> + Bo1 + Neural (if both are given)
+        """
         names = names or [f"ranker_{i}" for i in range(len(rankers))]
+        neural_t = reranker.as_transformer() if reranker is not None else None
+
+        pipelines: list = []
+        pipeline_names: list[str] = []
+
+        for ranker, label in zip(rankers, names):
+            retriever = ranker.get_pipeline() if hasattr(ranker, "get_pipeline") else ranker
+
+            # baseline
+            pipelines.append(retriever)
+            pipeline_names.append(label)
+
+            # + pseudo-RF
+            if feedback is not None:
+                rf_pipe = feedback.get_pipeline(retriever)
+                pipelines.append(rf_pipe)
+                pipeline_names.append(f"{label}+Bo1")
+
+            # + neural
+            if neural_t is not None:
+                pipelines.append(retriever >> neural_t)
+                pipeline_names.append(f"{label}+Neural")
+
+            # + pseudo-RF + neural
+            if feedback is not None and neural_t is not None:
+                rf_pipe = feedback.get_pipeline(retriever)
+                pipelines.append(rf_pipe >> neural_t)
+                pipeline_names.append(f"{label}+Bo1+Neural")
+
         return self._pt.Experiment(
             pipelines,
             self._topics,
             self._qrels,
             eval_metrics=self._METRICS,
-            names=names,
+            names=pipeline_names,
         )
 
     def compute_map(self, results: pd.DataFrame) -> float:
