@@ -43,8 +43,12 @@ class BM25Ranker(Ranker):
             metadata=["docno", "text"],
         )
 
-    def rank(self, query: str, top_k: int = None) -> pd.DataFrame:
+    def rank(self, query: str, top_k: int = None, k1: float | None = None, b: float | None = None) -> pd.DataFrame:
         self._retriever.num_results = top_k or self.top_k
+        active_k1 = k1 if k1 is not None else self.k1
+        active_b = b if b is not None else self.b
+        self._retriever.controls["bm25.k_1"] = str(active_k1)
+        self._retriever.controls["bm25.b"] = str(active_b)
         return self._retriever.search(query)
 
     def score(self, doc: dict, query: str) -> float:
@@ -74,7 +78,7 @@ class TFIDFRanker(Ranker):
             metadata=["docno", "text"],
         )
 
-    def rank(self, query: str, top_k: int = None) -> pd.DataFrame:
+    def rank(self, query: str, top_k: int = None, **kwargs) -> pd.DataFrame:
         self._retriever.num_results = top_k or self.top_k
         return self._retriever.search(query)
 
