@@ -1,16 +1,20 @@
 from __future__ import annotations
 
+import logging
 import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from fastapi import FastAPI, HTTPException
+
+logging.basicConfig(level=logging.INFO)
 from pydantic import BaseModel
 
 from src.search_engine import SearchEngine
 
 app = FastAPI(title="BoolFellas IR System", version="1.0")
+_log = logging.getLogger(__name__)
 
 INDEX_PATH = os.environ.get("INDEX_PATH", "./index")
 _engine = SearchEngine(index_path=INDEX_PATH)
@@ -36,12 +40,12 @@ class SearchRequest(BaseModel):
 
 class FeedbackRequest(BaseModel):
     query: str
-    relevant_doc_ids: list[str] = []
 
 
 class SearchResult(BaseModel):
     docno: str
     score: float
+    text: str = ""
     snippet: str = ""
 
 
@@ -52,7 +56,7 @@ class SearchResult(BaseModel):
 @app.post("/search")
 def search(req: SearchRequest) -> dict:
     try:
-        results = _engine.search(
+        resp = _engine.search(
             raw_query=req.query,
             use_mesh=req.use_mesh,
             use_feedback=req.use_feedback,
@@ -62,24 +66,30 @@ def search(req: SearchRequest) -> dict:
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        _log.exception("search failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
 
-    top = results.head(req.top_k)
+    top = resp.results.head(req.top_k)
     records = []
     for _, row in top.iterrows():
         records.append({
             "docno": str(row["docno"]),
             "score": float(row["score"]),
+            "text": str(row.get("text", "")),
             "snippet": str(row.get("snippet", "")),
         })
-    return {"query": req.query, "results": records}
+    return {
+        "query": req.query,
+        "expanded_query": resp.expanded_query or None,
+        "results": records,
+    }
 
 
 @app.post("/feedback")
 def feedback(req: FeedbackRequest) -> dict:
-    """Re-retrieve with pseudo-relevance feedback applied."""
+    """Re-retrieve using pseudo-relevance feedback (Bo1 on top docs — no user labels needed)."""
     try:
-        results = _engine.search(
+        resp = _engine.search(
             raw_query=req.query,
             use_feedback=True,
             use_neural=False,
@@ -89,12 +99,16 @@ def feedback(req: FeedbackRequest) -> dict:
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-    top = results.head(10)
+    top = resp.results.head(10)
     records = [
         {"docno": str(row["docno"]), "score": float(row["score"])}
         for _, row in top.iterrows()
     ]
-    return {"query": req.query, "results": records}
+    return {
+        "query": req.query,
+        "expanded_query": resp.expanded_query or None,
+        "results": records,
+    }
 
 
 @app.get("/evaluate")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Iterator
 
 import pandas as pd
@@ -10,6 +11,12 @@ from .query_processor import QueryProcessor
 from .rankers import BM25Ranker, Ranker, TFIDFRanker
 from .snippet_generator import SnippetGenerator
 from .evaluation import EvaluationEngine
+
+
+@dataclass
+class SearchResponse:
+    results: pd.DataFrame
+    expanded_query: str = ""  # non-empty only when MeSH or pseudo-RF rewrote the query
 
 
 class SearchEngine:
@@ -90,15 +97,15 @@ class SearchEngine:
         use_feedback: bool = False,
         use_neural: bool = True,
         ranker: str = "bm25",
-    ) -> pd.DataFrame:
+    ) -> SearchResponse:
         """
         Full retrieval pipeline.
         1. Parse query (phrase / proximity / wildcard detection).
         2. Optionally expand with MeSH.
         3. First-stage retrieval: BM25 or TF-IDF top-100.
-        4. Optionally apply pseudo-relevance feedback and re-retrieve.
+        4. Optionally apply pseudo-relevance feedback (Bo1/KL — no user labels needed).
         5. Optionally neural re-rank with BioBERT/PubMedBERT.
-        6. Attach snippets.
+        6. Attach snippets; preserve full document text in results.
         """
         self._require_init()
 
@@ -114,12 +121,13 @@ class SearchEngine:
             query = self.query_proc.apply_feedback(query, candidates)
             candidates = active_ranker.rank(query.processed, top_k=self._cfg["top_k"])
 
+        if "text" not in candidates.columns:
+            candidates["text"] = ""
+
         if use_neural and not candidates.empty:
-            if "text" not in candidates.columns:
-                candidates["text"] = ""
             candidates = self.reranker.rerank(candidates, query.processed)
 
-        if not candidates.empty and "text" in candidates.columns:
+        if not candidates.empty:
             candidates["snippet"] = candidates.apply(
                 lambda row: self._snippet_gen.generate(
                     str(row.get("text", "")), query.processed
@@ -127,7 +135,7 @@ class SearchEngine:
                 axis=1,
             )
 
-        return candidates
+        return SearchResponse(results=candidates, expanded_query=query.expanded_query)
 
     # ------------------------------------------------------------------
     # Evaluation

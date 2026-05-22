@@ -14,6 +14,7 @@ from .wildcard_handler import WildcardHandler
 class Query:
     raw: str
     processed: str = ""
+    expanded_query: str = ""  # populated after MeSH or pseudo-RF expansion
     terms: list[str] = field(default_factory=list)
     is_phrase: bool = False
     is_proximity: bool = False
@@ -87,19 +88,24 @@ class QueryProcessor:
 
     def expand_with_mesh(self, q: Query) -> Query:
         """Expand every term in the query through MeSH synonyms and related terms."""
-        expanded: list[str] = []
+        raw_terms: list[str] = []
         for term in q.terms:
-            expanded.extend(self.mesh_expander.expand(term))
-        # Deduplicate while preserving order
+            raw_terms.extend(self.mesh_expander.expand(term))
+
+        # MeSH entries often contain commas, parentheses, slashes, etc. that
+        # break Terrier's query parser.  Tokenise each entry into plain words.
+        tokens: list[str] = []
         seen: set[str] = set()
-        unique: list[str] = []
-        for t in expanded:
-            tl = t.lower()
-            if tl not in seen:
-                seen.add(tl)
-                unique.append(t)
-        q.processed = " ".join(unique)
-        q.terms = unique
+        for entry in raw_terms:
+            for tok in re.split(r"\s+", re.sub(r"[^\w\s]", " ", entry)):
+                tl = tok.lower()
+                if tok and tl not in seen:
+                    seen.add(tl)
+                    tokens.append(tok)
+
+        q.processed = " ".join(tokens)
+        q.expanded_query = q.processed
+        q.terms = tokens
         return q
 
     def apply_feedback(self, q: Query, docs: pd.DataFrame) -> Query:
@@ -107,6 +113,7 @@ class QueryProcessor:
         if self._relevance_feedback is None or docs is None or docs.empty:
             return q
         q.processed = self._relevance_feedback.apply_feedback(q.processed, docs)
+        q.expanded_query = q.processed
         q.terms = [
             t for t in re.split(r"\s+", re.sub(r"[^\w\s]", " ", q.processed)) if t
         ]

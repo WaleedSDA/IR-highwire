@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import xml.etree.ElementTree as ET
 from functools import lru_cache
 
@@ -8,6 +9,8 @@ import requests
 
 NCBI_EUTILS = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 _REQUEST_TIMEOUT = 10
+_log = logging.getLogger(__name__)
+_EMPTY: dict = {"synonyms": [], "related": []}
 
 
 class MeSHExpander:
@@ -22,37 +25,35 @@ class MeSHExpander:
 
     @lru_cache(maxsize=512)
     def _fetch_mesh_data(self, term: str) -> dict:
-        search_url = f"{NCBI_EUTILS}/esearch.fcgi"
-        params = {
-            "db": "mesh",
-            "term": term,
-            "retmode": "json",
-            "email": self.email,
-        }
+        # --- esearch: resolve term → MeSH ID ---
         try:
-            resp = requests.get(search_url, params=params, timeout=_REQUEST_TIMEOUT)
+            resp = requests.get(
+                f"{NCBI_EUTILS}/esearch.fcgi",
+                params={"db": "mesh", "term": term, "retmode": "json", "email": self.email},
+                timeout=_REQUEST_TIMEOUT,
+            )
             resp.raise_for_status()
-        except requests.RequestException:
-            return {"synonyms": [], "related": []}
+            ids = resp.json().get("esearchresult", {}).get("idlist", [])
+        except Exception as exc:
+            _log.warning("MeSH esearch failed for %r: %s", term, exc)
+            return _EMPTY
 
-        ids = resp.json().get("esearchresult", {}).get("idlist", [])
         if not ids:
-            return {"synonyms": [], "related": []}
+            return _EMPTY
 
-        fetch_url = f"{NCBI_EUTILS}/efetch.fcgi"
-        fetch_params = {
-            "db": "mesh",
-            "id": ids[0],
-            "retmode": "xml",
-            "email": self.email,
-        }
+        # --- efetch: retrieve descriptor XML ---
         try:
-            fetch_resp = requests.get(fetch_url, params=fetch_params, timeout=_REQUEST_TIMEOUT)
+            fetch_resp = requests.get(
+                f"{NCBI_EUTILS}/efetch.fcgi",
+                params={"db": "mesh", "id": ids[0], "retmode": "xml", "email": self.email},
+                timeout=_REQUEST_TIMEOUT,
+            )
             fetch_resp.raise_for_status()
-        except requests.RequestException:
-            return {"synonyms": [], "related": []}
+            root = ET.fromstring(fetch_resp.text)
+        except Exception as exc:
+            _log.warning("MeSH efetch/parse failed for %r: %s", term, exc)
+            return _EMPTY
 
-        root = ET.fromstring(fetch_resp.text)
         synonyms: list[str] = []
         for string_el in root.iter("String"):
             val = (string_el.text or "").strip()

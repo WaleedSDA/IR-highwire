@@ -65,12 +65,12 @@ def main():
 
     # Smoke test
     print("\n--- Smoke test: BM25 retrieval (no neural) ---")
-    results = engine.search("gene expression regulation cancer", use_neural=False)
-    print(results[["docno", "score"]].head(5).to_string(index=False))
+    resp = engine.search("gene expression regulation cancer", use_neural=False)
+    print(resp.results[["docno", "score"]].head(5).to_string(index=False))
 
     print("\n--- Smoke test: phrase query ---")
-    results = engine.search('"gene expression"', use_neural=False)
-    print(results[["docno", "score"]].head(5).to_string(index=False))
+    resp = engine.search('"gene expression"', use_neural=False)
+    print(resp.results[["docno", "score"]].head(5).to_string(index=False))
 
     if args.evaluate:
         print("\n--- Running pt.Experiment (BM25 vs TF-IDF) ---")
