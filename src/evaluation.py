@@ -17,9 +17,11 @@ class EvaluationEngine:
     _METRICS = ["map", "ndcg_cut_10", "P_5", "P_10", "recip_rank", "Rprec"]
 
     def __init__(self, dataset_names: list[str] | None = None):
+        from .pt_initializer import init_pyterrier
+        init_pyterrier()
+
         import pyterrier as pt
-        if not pt.started():
-            pt.init()
+
 
         self._pt = pt
         names = dataset_names or self._DATASETS

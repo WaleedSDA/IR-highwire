@@ -140,14 +140,43 @@ class SearchEngine:
             if bm25_b is not None:
                 rank_kwargs["b"] = bm25_b
 
-        candidates = active_ranker.rank(query.processed, top_k=self._cfg["top_k"], **rank_kwargs)
+        has_constraints = hasattr(query, "field_constraints") and query.field_constraints
+        active_top_k = self._cfg["top_k"]
+        if has_constraints:
+            # Query up to 1000 candidates to ensure strong recall after field filtering
+            active_top_k = max(active_top_k, 1000)
+
+        candidates = active_ranker.rank(query.processed, top_k=active_top_k, **rank_kwargs)
 
         if use_feedback and not candidates.empty:
             query = self.query_proc.apply_feedback(query, candidates)
-            candidates = active_ranker.rank(query.processed, top_k=self._cfg["top_k"], **rank_kwargs)
+            candidates = active_ranker.rank(query.processed, top_k=active_top_k, **rank_kwargs)
 
         if "text" not in candidates.columns:
             candidates["text"] = ""
+
+        # Perform precise post-retrieval field constraints filtering
+        if has_constraints and not candidates.empty:
+            filtered_rows = []
+            for _, row in candidates.iterrows():
+                keep = True
+                for field, vals in query.field_constraints.items():
+                    # Check matching case-insensitively in metadata
+                    field_val = str(row.get(field, "")).lower()
+                    for val in vals:
+                        if val not in field_val:
+                            keep = False
+                            break
+                    if not keep:
+                        break
+                if keep:
+                    filtered_rows.append(row)
+            if filtered_rows:
+                candidates = pd.DataFrame(filtered_rows)
+            else:
+                candidates = pd.DataFrame(columns=candidates.columns)
+            # Truncate back to the requested top_k for neural reranking
+            candidates = candidates.head(self._cfg["top_k"])
 
         if use_neural and not candidates.empty:
             model = neural_model or self._cfg.get("neural_model", "biobert")
@@ -163,6 +192,7 @@ class SearchEngine:
             )
 
         return SearchResponse(results=candidates, expanded_query=query.expanded_query)
+
 
     # ------------------------------------------------------------------
     # Evaluation

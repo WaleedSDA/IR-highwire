@@ -19,10 +19,12 @@ class Query:
     is_phrase: bool = False
     is_proximity: bool = False
     proximity_window: int = 0
+    field_constraints: dict[str, list[str]] = field(default_factory=dict)
 
     def __post_init__(self):
         if not self.processed:
             self.processed = self.raw
+
 
 
 class QueryProcessor:
@@ -65,26 +67,48 @@ class QueryProcessor:
     def parse_query(self, raw: str) -> Query:
         q = Query(raw=raw)
 
+        # Parse field constraints (e.g. title:cancer, journal:"nature science")
+        matches = re.findall(r'(\w+):(?:([^"\s]+)|"([^"]+)")', raw)
+        field_constraints = {}
+        for f_name, term1, term2 in matches:
+            val = term1 or term2
+            field_constraints.setdefault(f_name.lower(), []).append(val.lower())
+        q.field_constraints = field_constraints
+
+        # Clean the query string from field constraints for first-stage retrieval
+        cleaned_query = re.sub(r'\w+:(?:[^"\s]+|"[^"]+")', '', raw).strip()
+        if not cleaned_query and field_constraints:
+            all_vals = []
+            for vals in field_constraints.values():
+                all_vals.extend(vals)
+            cleaned_query = " ".join(f'"{v}"' if " " in v else v for v in all_vals)
+
+        processed_query = cleaned_query or raw
+
         # Phrase query: "term1 term2"
-        if raw.startswith('"') and raw.endswith('"') and len(raw) > 2:
+        if processed_query.startswith('"') and processed_query.endswith('"') and len(processed_query) > 2:
             q.is_phrase = True
-            q.processed = raw  # Terrier handles phrase natively
+            q.processed = processed_query  # Terrier handles phrase natively
 
         # Proximity query: #N(term1 term2)
-        prox = re.match(r"^#(\d+)\((.+)\)$", raw.strip())
-        if prox:
-            q.is_proximity = True
-            q.proximity_window = int(prox.group(1))
-            q.processed = raw  # Terrier handles proximity natively
-
-        # Wildcard expansion
-        if self._wildcard_handler and ("*" in raw or "?" in raw) and not q.is_phrase:
-            q.processed = self._wildcard_handler.expand_query(raw)
+        else:
+            prox = re.match(r"^#(\d+)\((.+)\)$", processed_query.strip())
+            if prox:
+                q.is_proximity = True
+                q.proximity_window = int(prox.group(1))
+                q.processed = processed_query  # Terrier handles proximity natively
+            else:
+                # Wildcard expansion
+                if self._wildcard_handler and ("*" in processed_query or "?" in processed_query):
+                    q.processed = self._wildcard_handler.expand_query(processed_query)
+                else:
+                    q.processed = processed_query
 
         q.terms = [
             t for t in re.split(r"\s+", re.sub(r'[^\w\s]', " ", q.processed)) if t
         ]
         return q
+
 
     def expand_with_mesh(self, q: Query) -> Query:
         """Expand via MeSH: try the full query as one concept first, then per-term."""

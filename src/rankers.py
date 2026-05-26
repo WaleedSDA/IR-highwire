@@ -28,9 +28,10 @@ class BM25Ranker(Ranker):
     """
 
     def __init__(self, index_ref, k1: float = 1.5, b: float = 0.75, top_k: int = 100):
+        from .pt_initializer import init_pyterrier
+        init_pyterrier()
+
         import pyterrier as pt
-        if not pt.started():
-            pt.init()
 
         self.k1 = k1
         self.b = b
@@ -40,11 +41,13 @@ class BM25Ranker(Ranker):
             wmodel="BM25",
             controls={"bm25.k_1": str(k1), "bm25.b": str(b)},
             num_results=top_k,
-            metadata=["docno", "text"],
+            metadata=["docno", "title", "journal", "text"],
         )
 
+
     def rank(self, query: str, top_k: int = None, k1: float | None = None, b: float | None = None) -> pd.DataFrame:
-        self._retriever.num_results = top_k or self.top_k
+        limit = top_k or self.top_k
+        self._retriever.controls["end"] = str(limit - 1)
         active_k1 = k1 if k1 is not None else self.k1
         active_b = b if b is not None else self.b
         self._retriever.controls["bm25.k_1"] = str(active_k1)
@@ -65,9 +68,10 @@ class TFIDFRanker(Ranker):
     """
 
     def __init__(self, index_ref, norm_type: str = "TF_IDF", top_k: int = 100):
+        from .pt_initializer import init_pyterrier
+        init_pyterrier()
+
         import pyterrier as pt
-        if not pt.started():
-            pt.init()
 
         self.norm_type = norm_type
         self.top_k = top_k
@@ -75,11 +79,13 @@ class TFIDFRanker(Ranker):
             index_ref,
             wmodel="TF_IDF",
             num_results=top_k,
-            metadata=["docno", "text"],
+            metadata=["docno", "title", "journal", "text"],
         )
 
+
     def rank(self, query: str, top_k: int = None, **kwargs) -> pd.DataFrame:
-        self._retriever.num_results = top_k or self.top_k
+        limit = top_k or self.top_k
+        self._retriever.controls["end"] = str(limit - 1)
         return self._retriever.search(query)
 
     def score(self, doc: dict, query: str) -> float:
@@ -87,3 +93,4 @@ class TFIDFRanker(Ranker):
 
     def get_pipeline(self):
         return self._retriever
+

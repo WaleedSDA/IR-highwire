@@ -10,9 +10,11 @@ class RelevanceFeedback:
     """
 
     def __init__(self, index_ref, model: str = "Bo1"):
+        from .pt_initializer import init_pyterrier
+        init_pyterrier()
+
         import pyterrier as pt
-        if not pt.started():
-            pt.init()
+
 
         self.model_name = model
         self._index_ref = index_ref
