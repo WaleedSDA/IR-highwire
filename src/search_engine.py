@@ -114,12 +114,13 @@ class SearchEngine:
         neural_model: str | None = None,
         bm25_k1: float | None = None,
         bm25_b: float | None = None,
+        neural_top_k: int | None = None,
     ) -> SearchResponse:
         """
         Full retrieval pipeline.
         1. Parse query (phrase / proximity / wildcard detection).
         2. Optionally expand with MeSH.
-        3. First-stage retrieval: BM25 or TF-IDF top-100.
+        3. First-stage retrieval: BM25 or TF-IDF top-100 (or custom neural_top_k).
         4. Optionally apply pseudo-relevance feedback (Bo1/KL — no user labels needed).
         5. Optionally neural re-rank with BioBERT/PubMedBERT.
         6. Attach snippets; preserve full document text in results.
@@ -142,6 +143,9 @@ class SearchEngine:
 
         has_constraints = hasattr(query, "field_constraints") and query.field_constraints
         active_top_k = self._cfg["top_k"]
+        if use_neural and neural_top_k is not None:
+            active_top_k = neural_top_k
+            
         if has_constraints:
             # Query up to 1000 candidates to ensure strong recall after field filtering
             active_top_k = max(active_top_k, 1000)
@@ -175,8 +179,9 @@ class SearchEngine:
                 candidates = pd.DataFrame(filtered_rows)
             else:
                 candidates = pd.DataFrame(columns=candidates.columns)
-            # Truncate back to the requested top_k for neural reranking
-            candidates = candidates.head(self._cfg["top_k"])
+            # Truncate back to the neural re-ranking limit or default top_k
+            truncate_limit = neural_top_k if (use_neural and neural_top_k is not None) else self._cfg["top_k"]
+            candidates = candidates.head(truncate_limit)
 
         if use_neural and not candidates.empty:
             model = neural_model or self._cfg.get("neural_model", "biobert")

@@ -30,8 +30,13 @@ with search_tab:
     col1, col2, col3, col4 = st.columns(4)
     use_mesh = col1.checkbox("MeSH expansion", help="Expand terms via NCBI MeSH vocabulary")
     use_feedback = col2.checkbox("Relevance feedback (Bo1/KL)")
-    use_neural = col3.checkbox("Neural re-rank", value=True)
+    use_neural = col3.checkbox("Neural re-rank", value=False)
     neural_model = col3.selectbox("Neural Model", ["biobert", "pubmedbert"], disabled=not use_neural, label_visibility="collapsed")
+    
+    neural_top_k = 100
+    if use_neural:
+        neural_top_k = col3.number_input("Rerank top K", min_value=10, max_value=500, value=100, step=10, help="Number of top documents from BM25/TF-IDF to rerank using Neural model")
+
     ranker = col4.selectbox("1st-stage ranker", ["bm25", "tfidf"])
 
     bm25_k1 = None
@@ -58,6 +63,7 @@ with search_tab:
                         "top_k": top_k,
                         "bm25_k1": bm25_k1,
                         "bm25_b": bm25_b,
+                        "neural_top_k": neural_top_k,
                     },
                     timeout=120,
                 )
@@ -78,14 +84,23 @@ with search_tab:
             st.info(f"**Expanded query:** {expanded_query}")
 
         for i, hit in enumerate(hits, 1):
-            with st.expander(f"{i}. `{hit['docno']}` — score: {hit['score']:.4f}"):
+            title_text = hit.get("title", "").strip() or "No Title Available"
+            journal_text = hit.get("journal", "").strip().upper() or "UNKNOWN"
+            
+            with st.expander(f"{i}. `{hit['docno']}` — Score: {hit['score']:.4f} — {title_text[:60]}..."):
+                st.markdown(f"#### **Title:** {title_text}")
+                st.markdown(f"**Journal:** `{journal_text}`")
+                st.divider()
+                
                 snippet = hit.get("snippet", "")
+                st.markdown("**Snippet Preview:**")
                 st.markdown(snippet if snippet else "_No snippet available._")
+                
                 full_text = hit.get("text", "")
                 if full_text:
-                    st.divider()
-                    st.markdown("**Full document**")
-                    st.markdown(full_text)
+                    st.write("")
+                    with st.expander("📄 View Full Document Text"):
+                        st.markdown(full_text)
 
 # ------------------------------------------------------------------
 # Eval UI
