@@ -47,7 +47,8 @@ class SnippetGenerator:
 
     def get_pipeline(self):
         """Return a pt.text.snippets transformer for use in PyTerrier pipelines."""
+        from .pt_initializer import init_pyterrier
+        init_pyterrier()
         import pyterrier as pt
-        if not pt.started():
-            pt.init()
+
         return pt.text.snippets(self.index_ref)

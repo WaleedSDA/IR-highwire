@@ -28,8 +28,11 @@ def iter_corpus():
     for doc in ds.docs_iter():
         yield {
             "docno": doc.doc_id,
+            "title": doc.title,
+            "journal": doc.journal,
             "text": doc.default_text(),
         }
+
 
 
 def main():
@@ -38,9 +41,9 @@ def main():
     parser.add_argument("--evaluate", action="store_true", help="Run pt.Experiment")
     args = parser.parse_args()
 
-    import pyterrier as pt
-    if not pt.started():
-        pt.init()
+    from src.pt_initializer import init_pyterrier
+    init_pyterrier()
+
 
     from src.search_engine import SearchEngine
 

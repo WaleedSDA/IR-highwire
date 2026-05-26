@@ -33,12 +33,13 @@ class SearchRequest(BaseModel):
     query: str
     use_mesh: bool = False
     use_feedback: bool = False
-    use_neural: bool = True
+    use_neural: bool = False
     neural_model: str = "biobert"
     ranker: str = "bm25"
     top_k: int = 10
     bm25_k1: float | None = None
     bm25_b: float | None = None
+    neural_top_k: int = 100
 
 
 class FeedbackRequest(BaseModel):
@@ -68,6 +69,7 @@ def search(req: SearchRequest) -> dict:
             neural_model=req.neural_model,
             bm25_k1=req.bm25_k1,
             bm25_b=req.bm25_b,
+            neural_top_k=req.neural_top_k,
         )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
@@ -81,6 +83,8 @@ def search(req: SearchRequest) -> dict:
         records.append({
             "docno": str(row["docno"]),
             "score": float(row["score"]),
+            "title": str(row.get("title", "")),
+            "journal": str(row.get("journal", "")),
             "text": str(row.get("text", "")),
             "snippet": str(row.get("snippet", "")),
         })

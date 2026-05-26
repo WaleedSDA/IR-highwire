@@ -18,34 +18,45 @@ class PositionalIndex:
     _index: Optional[object] = field(default=None, repr=False, init=False)
 
     def index(self, docs: Iterator[dict]) -> None:
-        import pyterrier as pt
-        if not pt.started():
-            pt.init()
+        from .pt_initializer import init_pyterrier
+        init_pyterrier()
 
-        # text_attrs must be set explicitly: PyTerrier 1.0's auto-detection skips any
-        # field that appears in meta, so without this "text" would be excluded from
-        # indexing (Terrier would see zero terms and never build the lexicon).
-        indexer = pt.IterDictIndexer(
+        import pyterrier as pt
+
+        class FieldPositionalIndexer(pt.IterDictIndexer):
+            def _setup(self):
+                super()._setup()
+                if self.fields:
+                    self.setProperties(**{
+                        'FieldTags.casesensitive': 'false'
+                    })
+
+        # Specify lengths for meta attributes to prevent truncation
+        indexer = FieldPositionalIndexer(
             self.index_path,
             blocks=self.blocks,
-            meta={"docno": 26, "text": 131072},
+            meta={"docno": 26, "title": 1024, "journal": 64, "text": 131072},
             meta_reverse=["docno"],
-            text_attrs=("text",),
+            text_attrs=["title", "journal", "text"],
+            fields=True,
             overwrite=True,
         )
         self._index_ref = indexer.index(docs)
+
+
         self._index = pt.IndexFactory.of(self._index_ref)
 
     def load(self) -> None:
+        from .pt_initializer import init_pyterrier
+        init_pyterrier()
         import pyterrier as pt
-        if not pt.started():
-            pt.init()
 
         props = os.path.join(self.index_path, "data.properties")
         if not os.path.exists(props):
             raise FileNotFoundError(f"No index found at {self.index_path}")
         self._index_ref = pt.IndexRef.of(props)
         self._index = pt.IndexFactory.of(self._index_ref)
+
 
     @property
     def index_ref(self):
