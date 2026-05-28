@@ -12,7 +12,7 @@ import streamlit as st
 API_URL = os.environ.get("API_URL", "http://localhost:8000")
 
 st.set_page_config(page_title="BoolFellas IR", page_icon="🔬", layout="wide")
-st.title("BoolFellas — Biomedical Information Retrieval")
+st.title("BoolFellas - Implementation of an Information Retrieval System for Medical Scientific Documents")
 st.caption("Highwire Press · TREC Genomics 2006–2007")
 
 search_tab, eval_tab = st.tabs(["Search", "Evaluation"])
@@ -89,7 +89,8 @@ with search_tab:
             title_text = hit.get("title", "").strip() or "No Title Available"
             journal_text = hit.get("journal", "").strip().upper() or "UNKNOWN"
             
-            with st.expander(f"{i}. `{hit['docno']}` — Score: {hit['score']:.4f} — {title_text[:60]}..."):
+            title_truncated = f"{title_text[:120]}..." if len(title_text) > 120 else title_text
+            with st.expander(f"{i}. `{hit['docno']}` — Score: {hit['score']:.4f} — {title_truncated}"):
                 st.markdown(f"#### **Title:** {title_text}")
                 st.markdown(f"**Journal:** `{journal_text}`")
                 st.divider()

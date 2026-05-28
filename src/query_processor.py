@@ -91,8 +91,8 @@ class QueryProcessor:
         s = re.sub(r'\bAND\s+NOT\b', ' NOT ', query_str)
 
         # Tokenize: quoted phrases, uppercase operators, bare words
-        token_re = re.compile(r'"[^"]+"|(?<!\w)(AND|OR|NOT)(?!\w)|\S+')
-        op_re = re.compile(r'^(AND|OR|NOT)$')  # case-sensitive — operators must be uppercase
+        token_re = re.compile(r'"[^"]+"|(?<!\w)(?:AND|OR|NOT)(?!\w)|\S+')
+        op_re = re.compile(r'^(?:AND|OR|NOT)$')  # case-sensitive — operators must be uppercase
 
         positive = []   # list of (original_token, lowercase_term)
         excluded = []   # lowercase terms that must NOT appear
