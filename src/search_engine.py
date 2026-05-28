@@ -221,6 +221,15 @@ class SearchEngine:
     # Evaluation
     # ------------------------------------------------------------------
 
+    # BM25 (k1, b) grid evaluated in pt.Experiment
+    _BM25_VARIANTS: list[tuple[float, float]] = [
+        (1.2, 0.75),
+        (1.5, 0.75),
+        (2.0, 0.75),
+        (1.5, 0.30),
+        (1.5, 1.00),
+    ]
+
     def evaluate(
         self,
         dataset_names: list[str] | None = None,
@@ -230,15 +239,34 @@ class SearchEngine:
         """
         Run pt.Experiment over all enabled pipeline combinations.
 
-        use_neural defaults to False because BioBERT reranking over all
-        56 TREC topics takes ~20 minutes; enable it deliberately.
+        BM25 is evaluated across multiple (k1, b) settings.
+        Both Bo1 and KL feedback models are included when use_feedback=True.
+        use_neural defaults to False — BioBERT over all 56 topics takes ~20 min.
         """
         self._require_init()
+
+        index_ref = self.index.index_ref
+        top_k = self._cfg["top_k"]
+
+        rankers = [
+            BM25Ranker(index_ref, k1=k1, b=b, top_k=top_k)
+            for k1, b in self._BM25_VARIANTS
+        ] + [TFIDFRanker(index_ref, top_k=top_k)]
+
+        names = [f"BM25(k1={k1},b={b})" for k1, b in self._BM25_VARIANTS] + ["TF-IDF"]
+
+        feedbacks = None
+        if use_feedback and self.query_proc._feedback_cache:
+            feedbacks = [
+                (self.query_proc._feedback_cache["Bo1"], "Bo1"),
+                (self.query_proc._feedback_cache["KL"], "KL"),
+            ]
+
         engine = EvaluationEngine(dataset_names)
         return engine.run_experiment(
-            rankers=self.rankers,
-            names=["BM25", "TF-IDF"],
-            feedback=self.query_proc.feedback_model if use_feedback else None,
+            rankers=rankers,
+            names=names,
+            feedbacks=feedbacks,
             reranker=self._get_reranker(self._cfg["neural_model"]) if use_neural else None,
         )
 

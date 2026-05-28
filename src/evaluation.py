@@ -1,6 +1,11 @@
 from __future__ import annotations
 
+import logging
+import time
+
 import pandas as pd
+
+_log = logging.getLogger(__name__)
 
 
 class EvaluationEngine:
@@ -52,20 +57,24 @@ class EvaluationEngine:
         self,
         rankers: list,
         names: list[str] | None = None,
-        feedback=None,
+        feedbacks: list[tuple] | None = None,
         reranker=None,
     ) -> pd.DataFrame:
         """
         Build all enabled combinations and run pt.Experiment.
 
-        For each first-stage ranker the following pipelines are created:
+        feedbacks: list of (RelevanceFeedback, label_suffix) pairs, e.g.
+                   [(bo1_obj, "Bo1"), (kl_obj, "KL")]
+
+        For each first-stage ranker:
           <Ranker>
-          <Ranker> + Bo1          (if feedback is given)
-          <Ranker> + Neural       (if reranker is given)
-          <Ranker> + Bo1 + Neural (if both are given)
+          <Ranker>+<FB>        for each feedback model
+          <Ranker>+Neural      (if reranker given)
+          <Ranker>+<FB>+Neural for each feedback model (if reranker given)
         """
         names = names or [f"ranker_{i}" for i in range(len(rankers))]
         neural_t = reranker.as_transformer() if reranker is not None else None
+        fb_list = feedbacks or []
 
         pipelines: list = []
         pipeline_names: list[str] = []
@@ -73,34 +82,46 @@ class EvaluationEngine:
         for ranker, label in zip(rankers, names):
             retriever = ranker.get_pipeline() if hasattr(ranker, "get_pipeline") else ranker
 
-            # baseline
             pipelines.append(retriever)
             pipeline_names.append(label)
 
-            # + pseudo-RF
-            if feedback is not None:
-                rf_pipe = feedback.get_pipeline(retriever)
-                pipelines.append(rf_pipe)
-                pipeline_names.append(f"{label}+Bo1")
+            for fb, fb_label in fb_list:
+                pipelines.append(fb.get_pipeline(retriever))
+                pipeline_names.append(f"{label}+{fb_label}")
 
-            # + neural
             if neural_t is not None:
                 pipelines.append(retriever >> neural_t)
                 pipeline_names.append(f"{label}+Neural")
 
-            # + pseudo-RF + neural
-            if feedback is not None and neural_t is not None:
-                rf_pipe = feedback.get_pipeline(retriever)
-                pipelines.append(rf_pipe >> neural_t)
-                pipeline_names.append(f"{label}+Bo1+Neural")
+            for fb, fb_label in fb_list:
+                if neural_t is not None:
+                    pipelines.append(fb.get_pipeline(retriever) >> neural_t)
+                    pipeline_names.append(f"{label}+{fb_label}+Neural")
 
-        return self._pt.Experiment(
-            pipelines,
+        # Run each pipeline individually so we can log progress, then pass the
+        # collected result DataFrames to pt.Experiment for metric computation.
+        total = len(pipelines)
+        n_topics = len(self._topics)
+        _log.info("Evaluation starting — %d pipelines × %d topics", total, n_topics)
+
+        result_frames: list[pd.DataFrame] = []
+        for i, (pipe, name) in enumerate(zip(pipelines, pipeline_names), 1):
+            _log.info("[%d/%d] Running: %s", i, total, name)
+            t0 = time.perf_counter()
+            result_frames.append(pipe.transform(self._topics.copy()))
+            elapsed = time.perf_counter() - t0
+            _log.info("[%d/%d] Done: %s  (%.1fs, %d remaining)", i, total, name, elapsed, total - i)
+
+        _log.info("All pipelines done — computing metrics")
+        df = self._pt.Experiment(
+            result_frames,
             self._topics,
             self._qrels,
             eval_metrics=self._METRICS,
             names=pipeline_names,
         )
+        _log.info("Evaluation complete")
+        return df
 
     def compute_map(self, results: pd.DataFrame) -> float:
         ev = self._pt.Utils.evaluate(results, self._qrels, metrics=["map"])

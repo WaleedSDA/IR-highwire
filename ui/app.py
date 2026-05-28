@@ -119,10 +119,14 @@ with eval_tab:
         help="Adds +Neural and +Bo1+Neural rows. Runs BioBERT over all 56 topics — expect ~20 extra minutes.",
     )
 
-    pipelines_desc = "BM25, TF-IDF, BM25+Bo1, TF-IDF+Bo1"
+    bm25_variants = ["BM25(k1=1.2,b=0.75)", "BM25(k1=1.5,b=0.75)", "BM25(k1=2.0,b=0.75)", "BM25(k1=1.5,b=0.30)", "BM25(k1=1.5,b=1.00)"]
+    base_rankers = bm25_variants + ["TF-IDF"]
+    pipelines = base_rankers[:]
+    pipelines += [f"{r}+{fb}" for r in base_rankers for fb in ("Bo1", "KL")]
     if use_neural_eval:
-        pipelines_desc += ", BM25+Neural, TF-IDF+Neural, BM25+Bo1+Neural, TF-IDF+Bo1+Neural"
-    st.caption(f"Will evaluate: {pipelines_desc}")
+        pipelines += [f"{r}+Neural" for r in base_rankers]
+        pipelines += [f"{r}+{fb}+Neural" for r in base_rankers for fb in ("Bo1", "KL")]
+    st.caption(f"Will evaluate {len(pipelines)} pipelines: {', '.join(pipelines[:6])} …")
 
     if st.button("Run Evaluation", type="primary"):
         with st.spinner("Running pt.Experiment — this may take several minutes…"):
