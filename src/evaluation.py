@@ -105,11 +105,13 @@ class EvaluationEngine:
         _log.info("Evaluation starting — %d pipelines × %d topics", total, n_topics)
 
         result_frames: list[pd.DataFrame] = []
+        times: list[float] = []
         for i, (pipe, name) in enumerate(zip(pipelines, pipeline_names), 1):
             _log.info("[%d/%d] Running: %s", i, total, name)
             t0 = time.perf_counter()
             result_frames.append(pipe.transform(self._topics.copy()))
             elapsed = time.perf_counter() - t0
+            times.append(round(elapsed, 2))
             _log.info("[%d/%d] Done: %s  (%.1fs, %d remaining)", i, total, name, elapsed, total - i)
 
         _log.info("All pipelines done — computing metrics")
@@ -120,6 +122,7 @@ class EvaluationEngine:
             eval_metrics=self._METRICS,
             names=pipeline_names,
         )
+        df["time (s)"] = times
         _log.info("Evaluation complete")
         return df
 
