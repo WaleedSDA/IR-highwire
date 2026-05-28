@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Iterator
+import re
 
 import pandas as pd
 
@@ -83,10 +84,7 @@ class SearchEngine:
             BM25Ranker(index_ref, k1=cfg["bm25_k1"], b=cfg["bm25_b"], top_k=cfg["top_k"]),
             TFIDFRanker(index_ref, top_k=cfg["top_k"]),
         ]
-        self._reranker_cache = {
-            cfg["neural_model"].lower(): NeuralReranker(model_name=cfg["neural_model"])
-        }
-        self.reranker = self._reranker_cache[cfg["neural_model"].lower()]
+        self._reranker_cache = {}  # populated lazily on first use
         self._snippet_gen = SnippetGenerator(index_ref)
         self._initialized = True
 
@@ -115,6 +113,7 @@ class SearchEngine:
         bm25_k1: float | None = None,
         bm25_b: float | None = None,
         neural_top_k: int | None = None,
+        feedback_model: str | None = None,
     ) -> SearchResponse:
         """
         Full retrieval pipeline.
@@ -145,15 +144,15 @@ class SearchEngine:
         active_top_k = self._cfg["top_k"]
         if use_neural and neural_top_k is not None:
             active_top_k = neural_top_k
-            
-        if has_constraints:
-            # Query up to 1000 candidates to ensure strong recall after field filtering
+
+        if has_constraints or query.is_boolean:
+            # Query up to 1000 candidates to ensure strong recall after field/boolean filtering
             active_top_k = max(active_top_k, 1000)
 
         candidates = active_ranker.rank(query.processed, top_k=active_top_k, **rank_kwargs)
 
         if use_feedback and not candidates.empty:
-            query = self.query_proc.apply_feedback(query, candidates)
+            query = self.query_proc.apply_feedback(query, candidates, model=feedback_model)
             candidates = active_ranker.rank(query.processed, top_k=active_top_k, **rank_kwargs)
 
         if "text" not in candidates.columns:
@@ -161,14 +160,19 @@ class SearchEngine:
 
         # Perform precise post-retrieval field constraints filtering
         if has_constraints and not candidates.empty:
+            def _field_matches(field_val: str, constraint_val: str) -> bool:
+                if '*' in constraint_val or '?' in constraint_val:
+                    pattern = re.escape(constraint_val).replace(r'\*', '.*').replace(r'\?', '.')
+                    return bool(re.search(pattern, field_val, re.IGNORECASE))
+                return constraint_val in field_val
+
             filtered_rows = []
             for _, row in candidates.iterrows():
                 keep = True
                 for field, vals in query.field_constraints.items():
-                    # Check matching case-insensitively in metadata
                     field_val = str(row.get(field, "")).lower()
                     for val in vals:
-                        if val not in field_val:
+                        if not _field_matches(field_val, val):
                             keep = False
                             break
                     if not keep:
@@ -180,6 +184,20 @@ class SearchEngine:
             else:
                 candidates = pd.DataFrame(columns=candidates.columns)
             # Truncate back to the neural re-ranking limit or default top_k
+            truncate_limit = neural_top_k if (use_neural and neural_top_k is not None) else self._cfg["top_k"]
+            candidates = candidates.head(truncate_limit)
+
+        # Boolean AND/NOT post-filtering
+        if query.is_boolean and not candidates.empty and (query.boolean_must or query.boolean_must_not):
+            def _passes_boolean(text: str) -> bool:
+                t = text.lower()
+                if query.boolean_must and not all(term in t for term in query.boolean_must):
+                    return False
+                if query.boolean_must_not and any(term in t for term in query.boolean_must_not):
+                    return False
+                return True
+            mask = candidates["text"].apply(_passes_boolean)
+            candidates = candidates[mask].reset_index(drop=True)
             truncate_limit = neural_top_k if (use_neural and neural_top_k is not None) else self._cfg["top_k"]
             candidates = candidates.head(truncate_limit)
 
@@ -221,7 +239,7 @@ class SearchEngine:
             rankers=self.rankers,
             names=["BM25", "TF-IDF"],
             feedback=self.query_proc.feedback_model if use_feedback else None,
-            reranker=self.reranker if use_neural else None,
+            reranker=self._get_reranker(self._cfg["neural_model"]) if use_neural else None,
         )
 
     def _require_init(self) -> None:

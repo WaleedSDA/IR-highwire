@@ -23,13 +23,14 @@ search_tab, eval_tab = st.tabs(["Search", "Evaluation"])
 with search_tab:
     query = st.text_input(
         "Query",
-        placeholder='e.g.  gene expression   |   "DNA repair"   |   gene* cancer   |   #5(gene expression)',
+        placeholder='e.g.  cancer AND therapy   |   cancer NOT chemotherapy   |   "DNA repair"   |   gene* cancer   |   #5(gene expression)',
         key="search_query",
     )
 
     col1, col2, col3, col4 = st.columns(4)
     use_mesh = col1.checkbox("MeSH expansion", help="Expand terms via NCBI MeSH vocabulary")
-    use_feedback = col2.checkbox("Relevance feedback (Bo1/KL)")
+    use_feedback = col2.checkbox("Relevance feedback")
+    feedback_model = col2.selectbox("Feedback model", ["Bo1", "KL"], disabled=not use_feedback, label_visibility="collapsed", help="Bo1: Bose-Einstein 1 · KL: Kullback-Leibler divergence")
     use_neural = col3.checkbox("Neural re-rank", value=False)
     neural_model = col3.selectbox("Neural Model", ["biobert", "pubmedbert"], disabled=not use_neural, label_visibility="collapsed")
     
@@ -57,6 +58,7 @@ with search_tab:
                         "query": query,
                         "use_mesh": use_mesh,
                         "use_feedback": use_feedback,
+                        "feedback_model": feedback_model,
                         "use_neural": use_neural,
                         "neural_model": neural_model,
                         "ranker": ranker,

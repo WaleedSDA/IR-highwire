@@ -20,6 +20,9 @@ class Query:
     is_proximity: bool = False
     proximity_window: int = 0
     field_constraints: dict[str, list[str]] = field(default_factory=dict)
+    is_boolean: bool = False
+    boolean_must: list[str] = field(default_factory=list)    # AND terms — all must appear
+    boolean_must_not: list[str] = field(default_factory=list)  # NOT terms — none may appear
 
     def __post_init__(self):
         if not self.processed:
@@ -46,13 +49,18 @@ class QueryProcessor:
         self._terrier_index = terrier_index
 
         self._relevance_feedback: RelevanceFeedback | None = None
+        self._feedback_cache: dict[str, RelevanceFeedback] | None = None
         self._wildcard_handler: WildcardHandler | None = None
 
         if index_ref is not None and terrier_index is not None:
             self._init_components(index_ref, terrier_index)
 
     def _init_components(self, index_ref, terrier_index) -> None:
-        self._relevance_feedback = RelevanceFeedback(index_ref, self._feedback_model_name)
+        self._feedback_cache = {
+            "Bo1": RelevanceFeedback(index_ref, "Bo1"),
+            "KL": RelevanceFeedback(index_ref, "KL"),
+        }
+        self._relevance_feedback = self._feedback_cache[self._feedback_model_name]
         self._wildcard_handler = WildcardHandler(terrier_index)
 
     def set_index(self, index_ref, terrier_index) -> None:
@@ -63,6 +71,52 @@ class QueryProcessor:
     @property
     def feedback_model(self) -> RelevanceFeedback | None:
         return self._relevance_feedback
+
+    # Boolean operator pattern — matches uppercase AND / OR / NOT as whole words
+    _BOOL_OP_RE = re.compile(r'\b(AND|OR|NOT)\b')
+    # Tokenizer for boolean expressions: quoted phrases, operators, or bare words
+    _BOOL_TOKEN_RE = re.compile(r'"[^"]+"|AND\s+NOT|\bAND\b|\bOR\b|\bNOT\b|\S+')
+
+    @staticmethod
+    def _parse_boolean_expr(query_str: str):
+        """
+        Parse a boolean query with uppercase AND / OR / NOT operators.
+        Quoted phrases are treated as atomic tokens.
+        Returns (bm25_query, must_include, must_exclude).
+        - must_include: all positive terms when AND is present; all must appear in doc text.
+        - must_exclude: NOT terms; none may appear in doc text.
+        - bm25_query: positive terms only, passed to the ranker for scoring.
+        """
+        # Normalise "AND NOT" → "NOT"
+        s = re.sub(r'\bAND\s+NOT\b', ' NOT ', query_str)
+
+        # Tokenize: quoted phrases, uppercase operators, bare words
+        token_re = re.compile(r'"[^"]+"|(?<!\w)(AND|OR|NOT)(?!\w)|\S+')
+        op_re = re.compile(r'^(AND|OR|NOT)$')  # case-sensitive — operators must be uppercase
+
+        positive = []   # list of (original_token, lowercase_term)
+        excluded = []   # lowercase terms that must NOT appear
+        has_and = False
+        pending_op = None
+
+        for tok in token_re.findall(s):
+            if op_re.match(tok):
+                if tok == 'AND':
+                    has_and = True
+                pending_op = tok
+                continue
+            term_clean = tok.strip('"').lower().strip()
+            if not term_clean:
+                continue
+            if pending_op == 'NOT':
+                excluded.append(term_clean)
+            else:
+                positive.append((tok, term_clean))
+            pending_op = None
+
+        bm25_query = ' '.join(orig for orig, _ in positive)
+        must_include = [t for _, t in positive] if has_and else []
+        return bm25_query, must_include, excluded
 
     def parse_query(self, raw: str) -> Query:
         q = Query(raw=raw)
@@ -91,18 +145,29 @@ class QueryProcessor:
             q.processed = processed_query  # Terrier handles phrase natively
 
         # Proximity query: #N(term1 term2)
-        else:
+        elif re.match(r"^#(\d+)\((.+)\)$", processed_query.strip()):
             prox = re.match(r"^#(\d+)\((.+)\)$", processed_query.strip())
-            if prox:
-                q.is_proximity = True
-                q.proximity_window = int(prox.group(1))
-                q.processed = processed_query  # Terrier handles proximity natively
+            q.is_proximity = True
+            q.proximity_window = int(prox.group(1))
+            q.processed = processed_query  # Terrier handles proximity natively
+
+        # Boolean query: contains uppercase AND / OR / NOT
+        elif self._BOOL_OP_RE.search(processed_query):
+            bm25_q, must_include, must_exclude = self._parse_boolean_expr(processed_query)
+            if bm25_q:  # only treat as boolean if positive terms remain
+                q.is_boolean = True
+                q.boolean_must = must_include
+                q.boolean_must_not = must_exclude
+                q.processed = bm25_q
             else:
-                # Wildcard expansion
-                if self._wildcard_handler and ("*" in processed_query or "?" in processed_query):
-                    q.processed = self._wildcard_handler.expand_query(processed_query)
-                else:
-                    q.processed = processed_query
+                q.processed = processed_query
+
+        else:
+            # Wildcard expansion
+            if self._wildcard_handler and ("*" in processed_query or "?" in processed_query):
+                q.processed = self._wildcard_handler.expand_query(processed_query)
+            else:
+                q.processed = processed_query
 
         q.terms = [
             t for t in re.split(r"\s+", re.sub(r'[^\w\s]', " ", q.processed)) if t
@@ -140,11 +205,12 @@ class QueryProcessor:
         q.terms = tokens
         return q
 
-    def apply_feedback(self, q: Query, docs: pd.DataFrame) -> Query:
+    def apply_feedback(self, q: Query, docs: pd.DataFrame, model: str | None = None) -> Query:
         """Expand query using pseudo-relevance feedback from top-ranked docs."""
-        if self._relevance_feedback is None or docs is None or docs.empty:
+        fb = self._feedback_cache.get(model or self._feedback_model_name) if self._feedback_cache else self._relevance_feedback
+        if fb is None or docs is None or docs.empty:
             return q
-        q.processed = self._relevance_feedback.apply_feedback(q.processed, docs)
+        q.processed = fb.apply_feedback(q.processed, docs)
         q.expanded_query = q.processed
         q.terms = [
             t for t in re.split(r"\s+", re.sub(r"[^\w\s]", " ", q.processed)) if t

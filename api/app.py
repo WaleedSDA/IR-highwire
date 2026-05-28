@@ -33,6 +33,7 @@ class SearchRequest(BaseModel):
     query: str
     use_mesh: bool = False
     use_feedback: bool = False
+    feedback_model: str = "Bo1"
     use_neural: bool = False
     neural_model: str = "biobert"
     ranker: str = "bm25"
@@ -64,6 +65,7 @@ def search(req: SearchRequest) -> dict:
             raw_query=req.query,
             use_mesh=req.use_mesh,
             use_feedback=req.use_feedback,
+            feedback_model=req.feedback_model,
             use_neural=req.use_neural,
             ranker=req.ranker,
             neural_model=req.neural_model,
