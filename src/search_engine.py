@@ -223,17 +223,15 @@ class SearchEngine:
 
     # BM25 (k1, b) grid evaluated in pt.Experiment
     _BM25_VARIANTS: list[tuple[float, float]] = [
-        (1.2, 0.75),
-        (1.5, 0.75),
-        (2.0, 0.75),
-        (1.5, 0.30),
-        (1.5, 1.00),
+        (1.5, 0.25),
+        (2.0, 0.25),
     ]
 
     def evaluate(
         self,
         dataset_names: list[str] | None = None,
         use_feedback: bool = True,
+        use_mesh: bool = True,
         use_neural: bool = False,
     ) -> pd.DataFrame:
         """
@@ -241,7 +239,8 @@ class SearchEngine:
 
         BM25 is evaluated across multiple (k1, b) settings.
         Both Bo1 and KL feedback models are included when use_feedback=True.
-        use_neural defaults to False — BioBERT over all 56 topics takes ~20 min.
+        MeSH query expansion is evaluated when use_mesh=True.
+        use_neural defaults to False — BioBERT/PubMedBERT over all topics.
         """
         self._require_init()
 
@@ -262,12 +261,42 @@ class SearchEngine:
                 (self.query_proc._feedback_cache["KL"], "KL"),
             ]
 
+        # Create MeSH transformer if enabled
+        mesh_t = None
+        if use_mesh and self.query_proc is not None:
+            import pyterrier as pt
+            _query_proc = self.query_proc
+            
+            class MeSHTransformer(pt.Transformer):
+                def transform(self, df: pd.DataFrame) -> pd.DataFrame:
+                    if df.empty:
+                        return df
+                    df = df.copy()
+                    
+                    def _expand(raw_q):
+                        if "^" in raw_q or len(raw_q) > 300:
+                            return raw_q
+                        parsed_q = _query_proc.parse_query(raw_q)
+                        expanded_q = _query_proc.expand_with_mesh(parsed_q)
+                        return expanded_q.processed
+                        
+                    df["query"] = df["query"].apply(_expand)
+                    return df
+            
+            mesh_t = MeSHTransformer()
+
+        rerankers = {}
+        if use_neural:
+            rerankers["BioBERT"] = self._get_reranker("biobert")
+            rerankers["PubMedBERT"] = self._get_reranker("pubmedbert")
+
         engine = EvaluationEngine(dataset_names)
         return engine.run_experiment(
             rankers=rankers,
             names=names,
             feedbacks=feedbacks,
-            reranker=self._get_reranker(self._cfg["neural_model"]) if use_neural else None,
+            rerankers=rerankers if use_neural else None,
+            mesh_transformer=mesh_t,
         )
 
     def _require_init(self) -> None:

@@ -124,13 +124,14 @@ def feedback(req: FeedbackRequest) -> dict:
 
 
 @app.get("/evaluate")
-def evaluate(use_neural: bool = False) -> list[dict]:
+def evaluate(use_neural: bool = False, use_mesh: bool = True) -> list[dict]:
     """
     Run pt.Experiment over all pipeline combinations.
-    Pass ?use_neural=true to include BioBERT reranking (~20 min extra).
+    Pass ?use_neural=true to include BioBERT/PubMedBERT reranking.
+    Pass ?use_mesh=true/false to include/exclude MeSH query expansion.
     """
     try:
-        df = _engine.evaluate(use_neural=use_neural)
+        df = _engine.evaluate(use_neural=use_neural, use_mesh=use_mesh)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:

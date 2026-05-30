@@ -22,14 +22,32 @@ class NeuralReranker:
         hf_id = MODEL_MAP.get(model_name.lower(), model_name)
         self.model = SentenceTransformer(hf_id)
         self._model_name = model_name
+        self._embedding_cache: dict[str, np.ndarray] = {}
 
     def embed(self, texts: list[str]) -> np.ndarray:
-        return self.model.encode(
-            texts,
-            show_progress_bar=False,
-            convert_to_numpy=True,
-            normalize_embeddings=True,
-        )
+        results = [None] * len(texts)
+        uncached_texts = []
+        uncached_indices = []
+
+        for idx, text in enumerate(texts):
+            if text in self._embedding_cache:
+                results[idx] = self._embedding_cache[text]
+            else:
+                uncached_texts.append(text)
+                uncached_indices.append(idx)
+
+        if uncached_texts:
+            encoded = self.model.encode(
+                uncached_texts,
+                show_progress_bar=False,
+                convert_to_numpy=True,
+                normalize_embeddings=True,
+            )
+            for idx, text, emb in zip(uncached_indices, uncached_texts, encoded):
+                self._embedding_cache[text] = emb
+                results[idx] = emb
+
+        return np.array(results)
 
     def semantic_score(self, doc_text: str, query: str) -> float:
         embs = self.embed([query, doc_text])

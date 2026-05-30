@@ -19,7 +19,7 @@ class EvaluationEngine:
         "irds:highwire/trec-genomics-2006",
         "irds:highwire/trec-genomics-2007",
     ]
-    _METRICS = ["map", "ndcg_cut_10", "P_5", "P_10", "recip_rank", "Rprec"]
+    _METRICS = ["map", "ndcg_cut_10", "P_5", "P_10", "recip_rank", "Rprec", "recall_5", "recall_10"]
 
     def __init__(self, dataset_names: list[str] | None = None):
         from .pt_initializer import init_pyterrier
@@ -59,6 +59,8 @@ class EvaluationEngine:
         names: list[str] | None = None,
         feedbacks: list[tuple] | None = None,
         reranker=None,
+        rerankers: dict[str, NeuralReranker] | None = None,
+        mesh_transformer=None,
     ) -> pd.DataFrame:
         """
         Build all enabled combinations and run pt.Experiment.
@@ -69,12 +71,18 @@ class EvaluationEngine:
         For each first-stage ranker:
           <Ranker>
           <Ranker>+<FB>        for each feedback model
-          <Ranker>+Neural      (if reranker given)
-          <Ranker>+<FB>+Neural for each feedback model (if reranker given)
+          <Ranker>+<NeuralModel>  (for each reranker)
+          <Ranker>+<FB>+<NeuralModel> for each feedback model and reranker
         """
         names = names or [f"ranker_{i}" for i in range(len(rankers))]
-        neural_t = reranker.as_transformer() if reranker is not None else None
         fb_list = feedbacks or []
+
+        # Support both single reranker (backwards compatibility) and multi-reranker dict
+        rerankers_dict = {}
+        if rerankers is not None:
+            rerankers_dict.update(rerankers)
+        elif reranker is not None:
+            rerankers_dict["Neural"] = reranker
 
         pipelines: list = []
         pipeline_names: list[str] = []
@@ -82,21 +90,38 @@ class EvaluationEngine:
         for ranker, label in zip(rankers, names):
             retriever = ranker.get_pipeline() if hasattr(ranker, "get_pipeline") else ranker
 
-            pipelines.append(retriever)
-            pipeline_names.append(label)
+            # Run MeSH and Neural on all selected primary baselines
+            is_primary = True
 
-            for fb, fb_label in fb_list:
-                pipelines.append(fb.get_pipeline(retriever))
-                pipeline_names.append(f"{label}+{fb_label}")
+            # Construct base retriever variants (with and without MeSH expansion)
+            import os
+            base_variants = []
+            if os.environ.get("ONLY_MESH") != "true":
+                base_variants.append((retriever, label))
+            if mesh_transformer is not None and is_primary:
+                base_variants.append((mesh_transformer >> retriever, f"{label}+MeSH"))
 
-            if neural_t is not None:
-                pipelines.append(retriever >> neural_t)
-                pipeline_names.append(f"{label}+Neural")
+            for base_ret, base_label in base_variants:
+                # 1. Base Classical (with/without MeSH)
+                pipelines.append(base_ret)
+                pipeline_names.append(base_label)
 
-            for fb, fb_label in fb_list:
-                if neural_t is not None:
-                    pipelines.append(fb.get_pipeline(retriever) >> neural_t)
-                    pipeline_names.append(f"{label}+{fb_label}+Neural")
+                # 2. Feedback (Bo1 and KL)
+                for fb, fb_label in fb_list:
+                    pipelines.append(fb.get_pipeline(base_ret))
+                    pipeline_names.append(f"{base_label}+{fb_label}")
+
+                # 3. Neural Rerankers (BioBERT and PubMedBERT)
+                if is_primary:
+                    for r_label, r_obj in rerankers_dict.items():
+                        neural_t = r_obj.as_transformer()
+                        
+                        pipelines.append(base_ret >> neural_t)
+                        pipeline_names.append(f"{base_label}+{r_label}")
+
+                        for fb, fb_label in fb_list:
+                            pipelines.append(fb.get_pipeline(base_ret) >> neural_t)
+                            pipeline_names.append(f"{base_label}+{fb_label}+{r_label}")
 
         # Run each pipeline individually so we can log progress, then pass the
         # collected result DataFrames to pt.Experiment for metric computation.
@@ -106,12 +131,29 @@ class EvaluationEngine:
 
         result_frames: list[pd.DataFrame] = []
         times: list[float] = []
+        import gc
+        import torch
+
         for i, (pipe, name) in enumerate(zip(pipelines, pipeline_names), 1):
             _log.info("[%d/%d] Running: %s", i, total, name)
             t0 = time.perf_counter()
-            result_frames.append(pipe.transform(self._topics.copy()))
+            
+            # Run retrieval
+            res = pipe.transform(self._topics.copy())
+            
+            # Keep only columns required for metric computation to save gigabytes of RAM
+            cols_to_keep = [col for col in ["qid", "docno", "score", "rank"] if col in res.columns]
+            res = res[cols_to_keep].copy()
+            result_frames.append(res)
+            
             elapsed = time.perf_counter() - t0
             times.append(round(elapsed, 2))
+            
+            # Free unused memory immediately
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+                
             _log.info("[%d/%d] Done: %s  (%.1fs, %d remaining)", i, total, name, elapsed, total - i)
 
         _log.info("All pipelines done — computing metrics")

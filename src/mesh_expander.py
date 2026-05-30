@@ -22,62 +22,122 @@ class MeSHExpander:
     """
 
     def __init__(self, email: str = "user@example.com"):
-        self.email = email
+        import os
+        import sqlite3
+        self.email = os.environ.get("MESH_EMAIL", email)
+        self.api_key = os.environ.get("NCBI_API_KEY", None)
+        
+        # Check if local compiled SQLite database exists
+        self.db_path = "mesh_synonyms.db"
+        if os.path.exists(self.db_path):
+            _log.info("MeSHExpander: Loading in offline mode using local database '%s'", self.db_path)
+            self._db_conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self._offline = True
+        else:
+            _log.info("MeSHExpander: Local database '%s' not found. Operating in online API mode.", self.db_path)
+            self._offline = False
+            self._db_conn = None
+            
+        self._delay = 0.10 if self.api_key else 0.35
+        self._cache: dict[str, dict] = {}
+        
+        # Pre-populate cache with common English stopwords
+        stopwords = {
+            "what", "is", "the", "a", "of", "in", "and", "to", "for", "on", "with", 
+            "at", "by", "an", "be", "this", "that", "from", "are", "which", "or", 
+            "as", "but", "not", "how", "why", "who", "where", "when", "does", "do", "did"
+        }
+        for sw in stopwords:
+            self._cache[sw] = _EMPTY
 
-    @lru_cache(maxsize=512)
     def _fetch_mesh_data(self, term: str) -> dict:
+        if term in self._cache:
+            return self._cache[term]
+
+        if self._offline and self._db_conn:
+            try:
+                cursor = self._db_conn.cursor()
+                cursor.execute("SELECT synonyms FROM mesh_synonyms WHERE term = ?", (term.lower(),))
+                row = cursor.fetchone()
+                if row and row[0]:
+                    synonyms = row[0].split("|")[:8]
+                    res = {"synonyms": synonyms, "related": []}
+                    self._cache[term] = res
+                    return res
+                self._cache[term] = _EMPTY
+                return _EMPTY
+            except Exception as e:
+                _log.warning("MeSH offline lookup failed for %r: %s", term, e)
+                # Fallback to online search if DB fails for some reason
+                pass
+
         # Search with [mh] (MeSH Heading) for an exact descriptor match.
-        # A bare-term search returns subheadings and supplemental concepts first,
-        # which are plain-text records — not the descriptor we want.
         ids = self._esearch(f"{term}[mh]")
         if not ids:
             ids = self._esearch(term)  # fallback: accept any match
         if not ids:
+            self._cache[term] = _EMPTY
             return _EMPTY
 
         text = self._efetch(ids[0])
         if not text:
-            # Don't cache transient failures — evict this entry so the next
-            # call retries against NCBI instead of returning empty forever.
-            self._fetch_mesh_data.cache_clear()
+            self._cache[term] = _EMPTY
             return _EMPTY
 
-        return self._parse_text(text, term)
+        parsed = self._parse_text(text, term)
+        self._cache[term] = parsed
+        return parsed
 
     def _esearch(self, term: str) -> list[str]:
-        try:
-            resp = requests.get(
-                f"{NCBI_EUTILS}/esearch.fcgi",
-                params={"db": "mesh", "term": term, "retmode": "json", "email": self.email},
-                timeout=_REQUEST_TIMEOUT,
-            )
-            resp.raise_for_status()
-            return resp.json().get("esearchresult", {}).get("idlist", [])
-        except Exception as exc:
-            _log.warning("MeSH esearch failed for %r: %s", term, exc)
-            return []
-
-    def _efetch(self, mesh_id: str) -> str:
-        # NCBI efetch for db=mesh returns plain text regardless of retmode.
-        # Retry once on 429 (rate-limit) after a short sleep.
-        for attempt in range(2):
+        # NCBI rate limit: stay below allowed limit (10 req/s with key, 3 req/s without)
+        for attempt in range(3):
             try:
+                time.sleep(self._delay)
+                params = {"db": "mesh", "term": term, "retmode": "json", "email": self.email}
+                if self.api_key:
+                    params["api_key"] = self.api_key
+                    
                 resp = requests.get(
-                    f"{NCBI_EUTILS}/efetch.fcgi",
-                    params={"db": "mesh", "id": mesh_id, "email": self.email},
+                    f"{NCBI_EUTILS}/esearch.fcgi",
+                    params=params,
                     timeout=_REQUEST_TIMEOUT,
                 )
                 if resp.status_code == 429:
-                    if attempt == 0:
-                        time.sleep(_RETRY_DELAY)
-                        continue
-                    _log.warning("MeSH efetch rate-limited for id %r, giving up", mesh_id)
-                    return ""
+                    time.sleep(2.0)
+                    continue
+                resp.raise_for_status()
+                return resp.json().get("esearchresult", {}).get("idlist", [])
+            except Exception as exc:
+                if attempt == 2:
+                    _log.warning("MeSH esearch failed for %r: %s", term, exc)
+                    return []
+                time.sleep(1.0)
+        return []
+
+    def _efetch(self, mesh_id: str) -> str:
+        # NCBI rate limit: stay below allowed limit (10 req/s with key, 3 req/s without)
+        for attempt in range(3):
+            try:
+                time.sleep(self._delay)
+                params = {"db": "mesh", "id": mesh_id, "email": self.email}
+                if self.api_key:
+                    params["api_key"] = self.api_key
+                    
+                resp = requests.get(
+                    f"{NCBI_EUTILS}/efetch.fcgi",
+                    params=params,
+                    timeout=_REQUEST_TIMEOUT,
+                )
+                if resp.status_code == 429:
+                    time.sleep(2.0)
+                    continue
                 resp.raise_for_status()
                 return resp.text
             except Exception as exc:
-                _log.warning("MeSH efetch failed for id %r: %s", mesh_id, exc)
-                return ""
+                if attempt == 2:
+                    _log.warning("MeSH efetch failed for id %r: %s", mesh_id, exc)
+                    return ""
+                time.sleep(1.0)
         return ""
 
     @staticmethod
@@ -128,6 +188,10 @@ class MeSHExpander:
         return self._fetch_mesh_data(term)["related"]
 
     def expand(self, term: str) -> list[str]:
+        # If the term is excessively long (longer than 100 chars) or contains weights,
+        # it is not a valid single MeSH term. Skip it to avoid 414 Request-URI Too Long errors.
+        if len(term) > 100 or "^" in term:
+            return [term]
         data = self._fetch_mesh_data(term)
         all_terms = [term] + data["synonyms"] + data["related"]
         seen: set[str] = set()
