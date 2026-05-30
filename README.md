@@ -93,19 +93,24 @@ streamlit run ui/app.py
 
 ---
 
-## Query Syntax
+## Query Syntax & Search Features
 
-| Type | Example |
-|---|---|
-| Keyword | `gene expression cancer` |
-| Phrase | `"DNA repair mechanism"` |
-| Proximity (within N words) | `#5(gene cancer)` |
-| Wildcard | `gene* expression` |
+The system supports a powerful, rich query syntax that is parsed, expanded, and post-filtered across various retrieval stages:
 
-Options available via UI checkboxes or API flags:
-- **MeSH expansion** — expands each query term with NCBI MeSH synonyms and related terms
-- **Relevance feedback** — applies Bo1 or KL pseudo-relevance feedback after first-stage retrieval
-- **Neural re-ranking** — re-scores top-100 BM25 candidates with BioBERT or PubMedBERT
+| Feature | Query Syntax / Example | Description |
+|---|---|---|
+| **Keyword** | `gene expression cancer` | Standard term retrieval. Scores documents matching positive terms. |
+| **Phrase** | `"DNA repair mechanism"` | Exact sequence match. Utilizes PyTerrier's positional index natively. |
+| **Proximity** | `#5(gene cancer)` | Retrieves documents where terms appear within a window of $N$ words. |
+| **Wildcard** | `gene* expression` | Prefix/wildcard expansion. Expands matching terms via PyTerrier dictionary. |
+| **Field Constraints** | `title:gene journal:"journal of cell biology"` | Restricts search to specific fields (`title`, `journal`, `text`). Supports phrase constraints and wildcards (`journal:nat*`). |
+| **Boolean Logic** | `cancer AND therapy NOT chemotherapy` | Logical filtering. Operators must be in uppercase: `AND`, `OR`, `NOT`, `AND NOT`. Non-matching documents are pruned post-retrieval. |
+
+### Retrieval & Expansion Options (UI/API Controls)
+
+*   **MeSH Expansion (Offline)**: Automatically expands terms with medical subject headings, synonyms, and related terms instantly using a local pre-compiled SQLite MeSH database (`mesh_synonyms.db`), eliminating network latency.
+*   **Pseudo-Relevance Feedback (PRF)**: Performs feedback using **Bo1** (Bose-Einstein 1) or **KL** (Kullback-Leibler divergence) models over the top retrieved documents to automatically expand the query and improve recall.
+*   **Neural Re-ranking**: Re-ranks the top-$K$ classical candidates using state-of-the-art transformer models tuned for biomedicine: **BioBERT** or **PubMedBERT**.
 
 ---
 
@@ -141,18 +146,85 @@ Runs `pt.Experiment` over BM25 and TF-IDF against the official TREC qrels. Retur
 
 ---
 
-## Evaluation Results (Progress Report)
+## Evaluation Results
 
-Highwire corpus · 64 queries (TREC Genomics 2006–2007)
+We evaluated **54 distinct pipeline configurations** (classical baselines, relevance feedback methods, MeSH query expansions, and transformer-based neural re-rankers) over the official TREC Genomics 2006–2007 Highwire Press dataset.
 
-| Model | MAP | R-Prec | MRR | P@5 | P@10 | NDCG@10 |
-|---|---|---|---|---|---|---|
-| TF-IDF | **0.1516** | **0.1792** | **0.4140** | **0.2594** | **0.2172** | **0.2459** |
-| BM25 (k1=1.5, b=0.75) | 0.1039 | 0.1138 | 0.3003 | 0.1500 | 0.1422 | 0.1584 |
-| BM25 (k1=1.5, b=0.25) | 0.1048 | 0.1167 | 0.3103 | 0.1625 | 0.1438 | 0.1593 |
-| BM25 (k1=3.0, b=0.25) | 0.1002 | 0.1166 | 0.3312 | 0.1781 | 0.1516 | 0.1701 |
+### Key Evaluation Configurations & Metrics
 
-TF-IDF outperforms all BM25 configurations. BM25's length normalisation penalises the long full-text articles (avg. 6,542 tokens) in this corpus. Neural re-ranking, MeSH expansion, and relevance feedback results will be reported in the final submission.
+Below is a summary of the key baseline and top-performing combined configurations, sorted by Mean Average Precision (MAP):
+
+| Pipeline Configuration | MAP | R-Prec | MRR | P@5 | P@10 | NDCG@10 | Avg. Query Time |
+|---|---|---|---|---|---|---|---|
+| 1) **TF-IDF + KL (Best Overall)** | **0.1260** | **0.1747** | **0.4392** | **0.2656** | **0.2406** | **0.2706** | ~0.50 s |
+| 2) **TF-IDF + Bo1** | **0.1222** | **0.1681** | **0.4170** | **0.2750** | **0.2281** | **0.2567** | ~0.43 s |
+| 3) **TF-IDF (Baseline)** | 0.1138 | 0.1654 | 0.4141 | 0.2656 | 0.2141 | 0.2437 | ~0.22 s |
+| **BM25 ($k_1=2.0, b=0.25$) + KL (Best BM25)** | 0.0910 | 0.1340 | 0.3309 | 0.1906 | 0.1656 | 0.1857 | ~0.50 s |
+| **BM25 ($k_1=1.5, b=0.25$) + KL** | 0.0900 | 0.1287 | 0.3081 | 0.1719 | 0.1672 | 0.1811 | ~0.49 s |
+| **BM25 ($k_1=1.5, b=0.25$) (Baseline)** | 0.0736 | 0.1049 | 0.3042 | 0.1625 | 0.1438 | 0.1596 | ~0.23 s |
+| **TF-IDF + PubMedBERT (Neural)** | 0.0698 | 0.1145 | 0.2643 | 0.1438 | 0.1531 | 0.1443 | ~15.15 s |
+| **TF-IDF + BioBERT (Neural)** | 0.0642 | 0.1121 | 0.2710 | 0.1281 | 0.1359 | 0.1293 | ~15.20 s |
+| **TF-IDF + MeSH (Offline Expansion)** | 0.0433 | 0.0713 | 0.1419 | 0.0844 | 0.0813 | 0.0815 | ~15.93 s |
+
+---
+
+### In-Depth Analysis & Discussion
+
+We analyzed the four fundamental behaviors of the multi-stage pipeline using the plots located in `discussion_plots/`.
+
+#### 1. Classical Baselines: TF-IDF vs. BM25
+The Highwire Press collection contains full-text medical articles with an average document length of **6,542 tokens**. Standard BM25 (configured with the typical default $b=0.75$) penalizes long documents extremely severely, assuming they contain broad topics and noise. 
+
+As shown in the plot below, when length normalization is completely turned off ($b=0.0$) or minimized ($b=0.25$), BM25's MAP increases from `0.0732` to `0.0736`. However, **TF-IDF substantially outperforms all BM25 variants** across all metrics (MAP: `0.1138` vs. `0.0736`). TF-IDF's logarithmic document frequency weighting is far more robust to extreme document length variations in this specialized corpus.
+
+![TF-IDF vs BM25](discussion_plots/1_tfidf_vs_bm25.png)
+
+*Figure 1: Comparison of baseline TF-IDF against BM25 configurations under different parameter selections.*
+
+---
+
+#### 2. Relevance Feedback: Boosting Performance Natively
+Pseudo-Relevance Feedback (PRF) consistently delivers the strongest positive impact on retrieval quality. Expanding the query terms based on the top retrieved documents (without requiring manual user annotations) significantly alleviates the vocabulary mismatch problem.
+
+Both the **Kullback-Leibler (KL) divergence** and **Bose-Einstein 1 (Bo1)** models achieve massive improvements:
+*   **TF-IDF + KL** boosts MAP by **+10.7%** relative to the TF-IDF baseline (increasing from `0.1138` to `0.1260`).
+*   **BM25 + KL** boosts MAP by **+23.6%** relative to the BM25 baseline (increasing from `0.0736` to `0.0910`).
+
+As illustrated in the PRF effect plot, relevance feedback provides a dramatic shift in precision at higher cut-offs (e.g. NDCG@10, P@5, P@10), making it the single most effective performance optimizer in our pipeline.
+
+![PRF Effect](discussion_plots/2_prf_effect.png)
+
+*Figure 2: The consistent positive impact of Bo1 and KL Relevance Feedback on classical models.*
+
+---
+
+#### 3. MeSH Query Expansion: The Complexity Failure
+Intuitively, expanding highly specialized medical queries with Medical Subject Headings (MeSH) should improve recall. However, our experiments revealed a **severe performance collapse**:
+*   Adding MeSH query expansion to TF-IDF causes MAP to drop from `0.1138` to **`0.0433`** (a **-62% drop**).
+*   Adding MeSH to BM25 causes MAP to drop from `0.0736` to **`0.0340`** (a **-54% drop**).
+
+This phenomenon is a classic **Query Expansion Dilution/Drift** (Complexity Failure):
+1.  **Vocabulary Dilution**: MeSH expansion adds a very large number of synonyms and related concepts. Many of these terms are broad or noisy, which dilutes the specific intent of the query and pulls irrelevant documents into the top results.
+2.  **Query Execution Latency**: Because the expanded query contains hundreds of terms, query execution complexity sky-rockets. Evaluating these massive queries increases the query processing time by **70x to 80x** (from ~0.2 seconds to ~16 seconds per query!).
+
+![MeSH Expansion - Complexity Failure](discussion_plots/3_complexity_failure.png)
+
+*Figure 3: Severe performance degradation and extreme latency overhead introduced by MeSH expansion.*
+
+---
+
+#### 4. Neural Re-ranking: The BERT Anomaly
+Applying state-of-the-art transformer models (**BioBERT** and **PubMedBERT**) to re-rank the top-100 classical candidates resulted in a noticeable decrease in performance compared to their classical counterparts:
+*   **TF-IDF** alone achieves MAP `0.1138`, whereas **TF-IDF + PubMedBERT** drops to `0.0698` and **TF-IDF + BioBERT** drops to `0.0642`.
+*   Reranking also introduces massive latency, raising average search times from under a second to over **15 seconds** per query.
+
+This performance drop is caused by two primary factors:
+1.  **Input Length Limits (Truncation)**: BERT models have a strict input limit of **512 tokens**. Since the Highwire documents average 6,542 tokens, re-ranking based on truncated documents completely ignores up to 90% of the document content, missing key relevance indicators located deeper in full-text papers.
+2.  **Terminology Precision**: Biomedical retrieval relies heavily on matching exact, highly specific medical terms and codes. While dense neural embeddings excel at broad semantic matching, they often score documents with general thematic overlaps higher than documents containing the precise, specialized keyword matches demanded by TREC Genomics.
+
+![Neural Reranking - BERT Anomaly](discussion_plots/4_bert_anomaly.png)
+
+*Figure 4: Neural re-ranking performance drop and latency overhead due to BERT token limitations on full-text articles.*
 
 ---
 
