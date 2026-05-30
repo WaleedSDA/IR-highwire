@@ -28,7 +28,7 @@ with search_tab:
     )
 
     col1, col2, col3, col4 = st.columns(4)
-    use_mesh = col1.checkbox("MeSH expansion", help="Expand terms via NCBI MeSH vocabulary")
+    use_mesh = col1.checkbox("MeSH expansion (Offline)", help="Expand terms instantly using the local compiled SQLite MeSH database")
     use_feedback = col2.checkbox("Relevance feedback")
     feedback_model = col2.selectbox("Feedback model", ["Bo1", "KL"], disabled=not use_feedback, label_visibility="collapsed", help="Bo1: Bose-Einstein 1 · KL: Kullback-Leibler divergence")
     use_neural = col3.checkbox("Neural re-rank", value=False)
@@ -114,10 +114,16 @@ with eval_tab:
         "This may take several minutes the first time."
     )
 
-    use_neural_eval = st.checkbox(
+    col_e1, col_e2 = st.columns(2)
+    use_neural_eval = col_e1.checkbox(
         "Include Neural re-rank (BioBERT)",
         value=False,
         help="Adds +Neural and +Bo1+Neural rows. Runs BioBERT over all 56 topics — expect ~20 extra minutes.",
+    )
+    use_mesh_eval = col_e2.checkbox(
+        "Include MeSH expansion (Offline)",
+        value=False,
+        help="Include MeSH-enabled query expansion pipelines in the evaluation.",
     )
 
     bm25_variants = ["BM25(k1=1.2,b=0.75)", "BM25(k1=1.5,b=0.75)", "BM25(k1=2.0,b=0.75)", "BM25(k1=1.5,b=0.30)", "BM25(k1=1.5,b=1.00)"]
@@ -127,6 +133,8 @@ with eval_tab:
     if use_neural_eval:
         pipelines += [f"{r}+Neural" for r in base_rankers]
         pipelines += [f"{r}+{fb}+Neural" for r in base_rankers for fb in ("Bo1", "KL")]
+    if use_mesh_eval:
+        pipelines += [f"{p}+MeSH" for p in pipelines]
     st.caption(f"Will evaluate {len(pipelines)} pipelines: {', '.join(pipelines[:6])} …")
 
     if st.button("Run Evaluation", type="primary"):
@@ -134,7 +142,10 @@ with eval_tab:
             try:
                 resp = requests.get(
                     f"{API_URL}/evaluate",
-                    params={"use_neural": str(use_neural_eval).lower()},
+                    params={
+                        "use_neural": str(use_neural_eval).lower(),
+                        "use_mesh": str(use_mesh_eval).lower()
+                    },
                     timeout=3600,
                 )
                 resp.raise_for_status()
