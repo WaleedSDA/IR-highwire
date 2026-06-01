@@ -211,7 +211,12 @@ class QueryProcessor:
         if fb is None or docs is None or docs.empty:
             return q
         q.processed = fb.apply_feedback(q.processed, docs)
-        q.expanded_query = q.processed
+        cleaned_expanded = q.processed
+        cleaned_expanded = re.sub(r'\bapplypipeline:off\b', '', cleaned_expanded, flags=re.IGNORECASE)
+        #2 decimal places
+        cleaned_expanded = re.sub(r'(\S+)\^(\d+(?:\.\d+)?)', lambda m: f"{m.group(1)}^{float(m.group(2)):.2f}", cleaned_expanded)
+        cleaned_expanded = re.sub(r'\s+', ' ', cleaned_expanded).strip()
+        q.expanded_query = cleaned_expanded
         q.terms = [
             t for t in re.split(r"\s+", re.sub(r"[^\w\s]", " ", q.processed)) if t
         ]

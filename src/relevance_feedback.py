@@ -43,7 +43,7 @@ class RelevanceFeedback:
 
         # Bo1/KL transform: input must have both topic cols and result cols in one frame
         combined = topics.merge(
-            fb_docs[["qid", "docno", "score", "rank"]],
+            fb_docs[cols],
             on="qid",
         )
         try:
