@@ -4,6 +4,8 @@
 
 A multi-stage IR pipeline over the [Highwire Press](https://ir-datasets.com/highwire.html) corpus (162,259 full-text biomedical articles, TREC Genomics 2006–2007). Combines classical retrieval (BM25, TF-IDF) with neural re-ranking (BioBERT / PubMedBERT) and a Streamlit search UI.
 
+![Streamlit UI Screenshot](screenshot.png)
+
 ---
 
 ## Architecture
