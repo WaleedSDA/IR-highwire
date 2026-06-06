@@ -4,7 +4,9 @@
 
 A multi-stage IR pipeline over the [Highwire Press](https://ir-datasets.com/highwire.html) corpus (162,259 full-text biomedical articles, TREC Genomics 2006–2007). Combines classical retrieval (BM25, TF-IDF) with neural re-ranking (BioBERT / PubMedBERT) and a Streamlit search UI.
 
-![Streamlit UI Screenshot](screenshot.png)
+![Project Mini Poster](ProjectMiniPoster.png)
+
+*A PDF version of the project mini poster is available [here](Project%20Mini%20Poster.pdf).*
 
 ---
 
@@ -114,6 +116,10 @@ The system supports a powerful, rich query syntax that is parsed, expanded, and 
 *   **Pseudo-Relevance Feedback (PRF)**: Performs feedback using **Bo1** (Bose-Einstein 1) or **KL** (Kullback-Leibler divergence) models over the top retrieved documents to automatically expand the query and improve recall.
 *   **Neural Re-ranking**: Re-ranks the top-$K$ classical candidates using state-of-the-art transformer models tuned for biomedicine: **BioBERT** or **PubMedBERT**.
 
+#### Streamlit Search UI Screenshot
+
+![Streamlit Search UI](screenshot.png)
+
 ---
 
 ## REST API
@@ -150,7 +156,7 @@ Runs `pt.Experiment` over BM25 and TF-IDF against the official TREC qrels. Retur
 
 ## Evaluation Results
 
-We evaluated **54 distinct pipeline configurations** (classical baselines, relevance feedback methods, MeSH query expansions, and transformer-based neural re-rankers) over the official TREC Genomics 2006–2007 Highwire Press dataset.
+We evaluated **54 distinct pipeline configurations** (classical baselines, relevance feedback methods, MeSH query expansions, and transformer-based neural re-rankers) over the official TREC Genomics 2006–2007 Highwire Press dataset. Detailed metrics for all configurations are available in [all_54_evaluation_results.csv](all_54_evaluation_results.csv), and parameter sensitivity logs for BM25 are available in [bm25_parameter_tuning.csv](bm25_parameter_tuning.csv).
 
 ### Key Evaluation Configurations & Metrics
 
